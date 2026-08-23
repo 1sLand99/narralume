@@ -20,6 +20,15 @@ export const overview: typeof overviewZh = {
     continueAria: "Continue this chapter in the writing desk",
     viewStory: "View story",
   },
+  style: {
+    head: "Book voice",
+    manage: "Manage voice",
+    setUp: "Set up style",
+    empty:
+      "No style profile for this book yet: paste a passage of your own writing to distill this book's voice.",
+    layerNote:
+      "Prompt templates govern general craft; the book voice governs only this book's feel.",
+  },
   completed: {
     noChapters: "No chapters yet; next step: build the story outline.",
     reviewFoundation:

@@ -17,6 +17,13 @@ export const overview = {
     continueAria: "在写作台续写此章",
     viewStory: "查看故事",
   },
+  style: {
+    head: "本书文风",
+    manage: "管理文风",
+    setUp: "去设置文风",
+    empty: "还没为这本书设置文风档案：贴一段你的文字，提炼出这本书的语感。",
+    layerNote: "写作法模板管通用笔法，本书文风只管这本书的语感。",
+  },
   completed: {
     noChapters: "还没有章节；下一步：先搭故事大纲。",
     reviewFoundation: "没有正在撰写的章节；下一步：确认作品方向。",

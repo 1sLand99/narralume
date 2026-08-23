@@ -14,11 +14,13 @@ import {
   controlAutopilotSession,
   controlRun,
   getProjectOverview,
+  getStyleProfiles,
   resolveAutopilotFailure,
   type ProjectOverview,
   type ProjectOverviewActiveTask,
   type RunActionRequest,
   type SessionActionRequest,
+  type StyleProfile,
 } from "../lib/api";
 import { formatRelativeDate } from "../lib/fmt";
 import {
@@ -143,6 +145,8 @@ function OverviewBoard({ overview }: { overview: ProjectOverview }) {
         </section>
       ) : null}
 
+      <StyleCard projectId={overview.project.id} />
+
       <PendingStrip projectId={overview.project.id} pending={pending} activeTask={activeTask} />
 
       <section className="overview__entries" aria-label={t("overview.entries.ariaLabel")}>
@@ -209,6 +213,40 @@ function ActiveTaskCard({ projectId, task }: { projectId: string; task: ProjectO
         {mutation.isError ? <ErrorNote error={mutation.error} title={t("overview.activeTask.error")} /> : null}
       </article>
       {confirmCancel ? <ConfirmDialog title={t("overview.cancelDialog.title")} confirmLabel={t("overview.cancelDialog.confirm")} danger pending={mutation.isPending} onCancel={() => setConfirmCancel(false)} onConfirm={() => mutation.mutate("cancel")}><p>{t("overview.cancelDialog.body")}</p></ConfirmDialog> : null}
+    </section>
+  );
+}
+
+/** 本书文风卡：当前启用风格的摘要 + 管理入口；写清与写作法模板的两层分工。
+ *  风格数据加载失败时静默隐藏，不打扰概览主信息流。 */
+function StyleCard({ projectId }: { projectId: string }) {
+  const { t } = useI18n();
+  const stylesQuery = useQuery({
+    queryKey: ["project", projectId, "styles"],
+    queryFn: ({ signal }) => getStyleProfiles(projectId, signal),
+  });
+  if (stylesQuery.isPending || stylesQuery.isError) return null;
+  const active: StyleProfile | null =
+    stylesQuery.data.find((style) => style.status === "active" && style.active) ?? null;
+  return (
+    <section className="overview__style" aria-label={t("overview.style.head")}>
+      <h2 className="overview__current-head">{t("overview.style.head")}</h2>
+      <article className="overview__style-card" data-empty={active === null}>
+        {active ? (
+          <>
+            <strong className="overview__style-name">{active.name}</strong>
+            <p className="overview__style-summary">{active.description || active.rules.slice(0, 2).join("；")}</p>
+          </>
+        ) : (
+          <p className="overview__style-summary">{t("overview.style.empty")}</p>
+        )}
+        <p className="overview__style-note mono">{t("overview.style.layerNote")}</p>
+        <div className="overview__style-actions">
+          <Link className="btn" to={`/settings?project=${encodeURIComponent(projectId)}`}>
+            {active ? t("overview.style.manage") : t("overview.style.setUp")}
+          </Link>
+        </div>
+      </article>
     </section>
   );
 }

@@ -130,6 +130,46 @@
   margin-top: 0.4rem;
 }
 
+/* ---- 本书文风 -------------------------------------------------------------- */
+
+.overview__style {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+.overview__style-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  max-width: 720px;
+  padding: 1rem 1.3rem;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  background: var(--paper-raised);
+}
+.overview__style-card[data-empty="true"] {
+  border-style: dashed;
+  background: none;
+}
+.overview__style-name {
+  font-weight: var(--weight-display);
+  font-size: 1.02rem;
+  letter-spacing: 0.03em;
+}
+.overview__style-summary {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  line-height: 1.7;
+}
+.overview__style-note {
+  color: var(--ink-faint);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+}
+.overview__style-actions {
+  margin-top: 0.3rem;
+}
+
 /* ---- 下一步入口 ----------------------------------------------------------- */
 
 .overview__entries {
