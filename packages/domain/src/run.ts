@@ -53,7 +53,10 @@ export type CollaborationStepKind =
   | "edit.transform"
   | "edit.stage";
 
-export type DeliveryStepKind = "import.analyze" | "import.stage";
+export type DeliveryStepKind =
+  | "import.analyze"
+  | "import.stage"
+  | "style.extract";
 
 export type AssistantStepKind =
   "assistant.context" | "assistant.respond" | "assistant.stage";

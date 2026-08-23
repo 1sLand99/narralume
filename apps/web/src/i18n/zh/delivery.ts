@@ -121,6 +121,18 @@ export const delivery = {
         saveError: "风格未保存",
         submit: "保存风格",
       },
+      extract: {
+        label: "从文本提炼风格",
+        placeholder: "贴入一段你的文字或参考文字（至少 200 字）…",
+        hint: "贴一段样文，AI 提炼出风格档案草稿；确认内容后手动启用。写作法模板管通用笔法，风格档案管这本书的语感。",
+        tooShort: "样文太短（当前 {count} 字）：至少 200 字才能提炼出稳定的笔法。",
+        submit: "提炼风格档案",
+        running: "提炼中…",
+        runningNote: "提炼在后台进行，完成后自动选中草稿",
+        viewRun: "查看任务",
+        failed: "提炼任务没有完成，可查看任务详情后重试。",
+        error: "提炼没有开始",
+      },
     },
     skills: {
       loading: "正在加载 Writing Skill…",

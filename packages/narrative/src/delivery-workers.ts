@@ -25,6 +25,8 @@ import {
   deliveryValidator,
   IMPORT_ANALYSIS_CONTRACT,
   ImportAnalysisSchema,
+  STYLE_PROFILE_CONTRACT,
+  StyleSchema,
   type ImportAnalysis,
 } from "./delivery-schemas.js";
 
@@ -45,6 +47,7 @@ export class DeliveryWorkerSuite {
     return {
       "import.analyze": this.worker(this.analyzeImport.bind(this)),
       "import.stage": this.worker(this.stageAnalysis.bind(this)),
+      "style.extract": this.worker(this.extractStyle.bind(this)),
     };
   }
 
@@ -402,6 +405,85 @@ export class DeliveryWorkerSuite {
       })
       .join("\n\n");
   }
+
+  /** 贴样文提炼风格档案：产物是一条未启用的 style profile 草稿，作者审核后启用。
+   *  以 source=extract:{runId} 落库，重放已完成的 run 时直接返回已有草稿。 */
+  private async extractStyle(
+    snapshot: RunSnapshot,
+    step: NarrativeRunStep,
+    signal: AbortSignal,
+  ): Promise<StepExecutionResult> {
+    const source = `extract:${snapshot.run.id}`;
+    const existing = this.delivery
+      .listStyleProfiles(snapshot.run.projectId, true)
+      .find((profile) => profile.source === source);
+    if (existing) {
+      return {
+        artifactKind: "style-extract",
+        output: { styleProfileId: existing.id, name: existing.name },
+        usage: zeroUsage(),
+      };
+    }
+    const text = policyString(snapshot.run.policy, "sourceText").trim();
+    if (text.length < 200) {
+      throw permanent(
+        "style.extract.text_too_short",
+        "The writing sample must be at least 200 characters",
+      );
+    }
+    const project = this.projects.get(snapshot.run.projectId);
+    if (!project) throw permanent("project.not_found", "Project not found");
+    const result = await this.model.structured(
+      snapshot.run,
+      step,
+      "style-extract",
+      styleExtractionRequest({
+        projectTitle: project.title,
+        language: project.language,
+        text,
+        maxOutputTokens: policyNumber(
+          snapshot.run.policy,
+          "styleExtractMaxOutputTokens",
+          4_000,
+        ),
+      }),
+      STYLE_PROFILE_CONTRACT,
+      deliveryValidator(StyleSchema),
+      signal,
+    );
+    const now = this.now().toISOString();
+    const profile = this.database.transaction(() => {
+      requireActiveRunCommit(
+        this.database,
+        snapshot.run.id,
+        snapshot.run.projectId,
+        signal,
+      );
+      return this.delivery.insertStyleProfile({
+        id: randomUuid(),
+        projectId: snapshot.run.projectId,
+        name: uniqueStyleName(
+          this.delivery.listStyleProfiles(snapshot.run.projectId, true),
+          result.value.name,
+        ),
+        description: result.value.description,
+        rules: [...result.value.rules],
+        negativeRules: [...result.value.negativeRules],
+        examples: [...result.value.examples],
+        source,
+        active: false,
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+        version: 0,
+      });
+    });
+    return {
+      artifactKind: "style-extract",
+      output: { styleProfileId: profile.id, name: profile.name },
+      usage: result.usage,
+    };
+  }
 }
 
 function importAnalysisRequest(input: {
@@ -662,6 +744,58 @@ function importEvidenceIssues(
   return issues;
 }
 
+function styleExtractionRequest(input: {
+  projectTitle: string;
+  language: string | null;
+  text: string;
+  maxOutputTokens: number;
+}) {
+  return {
+    instructions: instructionsFor(input.language, {
+      "zh-CN": [
+        "你是文风分析师。从给定样文中提炼一份可执行的风格档案，供作者审核后启用。",
+        "rules 写可操作的笔法规则（句子节奏、叙述习惯、对话密度、情绪如何外化），不写题材与情节事实。",
+        "negativeRules 写样文里明确没有、照着写容易走味的倾向。",
+        "examples 只摘取样文中最能代表语感的短片段，每条尽量短。",
+        "name 起一个点明语感的短名，不用人名或书名。",
+      ],
+      en: [
+        "You are a prose style analyst. Distill the given writing sample into an actionable style profile for the author to review and enable.",
+        "rules state actionable craft rules (sentence rhythm, narration habits, dialogue density, how emotion is externalized), never genre or plot facts.",
+        "negativeRules state tendencies clearly absent from the sample that would drift the voice if adopted.",
+        "examples quote only short excerpts that best represent the voice.",
+        "name is a short voice-describing label, never a person or book name.",
+      ],
+    }),
+    messages: [
+      {
+        role: "user" as const,
+        content: [
+          `目标作品：《${input.projectTitle}》`,
+          `样文：\n${input.text}`,
+          "请提炼风格档案（name、description、rules、negativeRules、examples）。",
+        ].join("\n\n"),
+      },
+    ],
+    reasoningEffort: "medium" as const,
+    maxOutputTokens: input.maxOutputTokens,
+  };
+}
+
+/** 提炼稿与既有档案重名时追加序号，保证单次提取总能落库。 */
+function uniqueStyleName(
+  existing: ReadonlyArray<{ name: string }>,
+  name: string,
+): string {
+  const taken = new Set(existing.map((profile) => profile.name));
+  if (!taken.has(name)) return name;
+  for (let index = 2; index < 100; index += 1) {
+    const candidate = `${name} ${index}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `${name} ${Date.now()}`;
+}
+
 function requiredArtifact(
   snapshot: RunSnapshot,
   kind: NarrativeRunStep["kind"],
@@ -712,4 +846,4 @@ function permanent(code: string, message: string) {
   error.retryable = false;
   return error;
 }
-import { sha256Hex } from "@narralume/domain";
+import { randomUuid, sha256Hex } from "@narralume/domain";

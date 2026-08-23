@@ -123,6 +123,22 @@ export const delivery: typeof deliveryZh = {
         saveError: "Style was not saved",
         submit: "Save style",
       },
+      extract: {
+        label: "Distill style from text",
+        placeholder:
+          "Paste a passage of your own or reference writing (at least 200 characters)…",
+        hint: "Paste a sample and the AI distills a draft style profile; review it and enable it manually. Prompt templates govern general craft; the style profile governs this book's voice.",
+        tooShort:
+          "Sample too short ({count} characters so far): at least 200 characters are needed to distill stable craft rules.",
+        submit: "Distill style profile",
+        running: "Distilling…",
+        runningNote:
+          "Distillation runs in the background; the draft is selected when done",
+        viewRun: "View task",
+        failed:
+          "The distillation task did not finish; check the task details and retry.",
+        error: "Distillation did not start",
+      },
     },
     skills: {
       loading: "Loading Writing Skills…",

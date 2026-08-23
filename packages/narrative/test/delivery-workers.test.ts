@@ -1,6 +1,7 @@
 import { createProject } from "@narralume/domain";
 import {
   buildImportAnalysisRecipe,
+  buildStyleExtractionRecipe,
   HarnessSupervisor,
 } from "@narralume/harness";
 import {
@@ -174,6 +175,101 @@ describe("DeliveryWorkerSuite", () => {
       (analysis?.importPipeline as { sourceCharacters: number })
         .sourceCharacters,
     ).toBeGreaterThan(27_000);
+  });
+
+  it("distills a writing sample into an inactive draft profile with a deduped name", async () => {
+    delivery.insertStyleProfile({
+      id: "style-existing",
+      projectId: "p1",
+      name: "冷峻短句",
+      description: "既有档案",
+      rules: ["短句为主"],
+      examples: [],
+      negativeRules: [],
+      source: "manual",
+      active: true,
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+      version: 0,
+    });
+    const sampleText = "雨下了一整夜，码头只剩一盏灯亮着。".repeat(20);
+    const model: NarrativeModelClient = {
+      async text() {
+        throw new Error("unused");
+      },
+      structured: vi.fn(
+        async (_run, _step, purpose, request, _contract, validate) => {
+          expect(purpose).toBe("style-extract");
+          expect(String(request.messages[0]?.content)).toContain("雨下了一整夜");
+          const checked = validate({
+            name: "冷峻短句",
+            description: "克制、以动作推进的语感。",
+            rules: ["叙述句短，转折压得更短", "情绪只从动作和物件里出来"],
+            negativeRules: ["不用感叹句收尾"],
+            examples: ["他把杯子放下，没说话。"],
+          });
+          if (!checked.success) throw new Error(checked.issues.join("; "));
+          return {
+            value: checked.data,
+            usage: {
+              inputTokens: 10,
+              outputTokens: 10,
+              calls: 1,
+              costUsd: 0,
+              wallTimeMs: 5,
+            },
+            mode: "native" as const,
+            attempts: 1,
+          };
+        },
+      ),
+    };
+    const recipe = buildStyleExtractionRecipe("run-2");
+    runs.create({
+      id: "run-2",
+      projectId: "p1",
+      recipe: recipe.name,
+      recipeVersion: recipe.version,
+      mode: "manual",
+      targetOutlineNodeId: null,
+      policy: {
+        sourceText: sampleText,
+        creationRequestId: "req-1",
+        creationRequestHash: "hash",
+      },
+      budgetLimit: {
+        maxInputTokens: 1_000_000,
+        maxOutputTokens: 100_000,
+        maxCalls: 20,
+        maxCostUsd: null,
+        maxWallTimeMs: 600_000,
+      },
+      steps: recipe.steps,
+      now,
+    });
+    const supervisor = new HarnessSupervisor(
+      runs,
+      new DeliveryWorkerSuite(database, model, () => new Date(now)).registry(),
+      { now: () => new Date(now), retryDelayMs: 0 },
+    );
+
+    for (let index = 0; index < 5; index += 1) {
+      await supervisor.processRun("run-2", "worker");
+      if (runs.getRun("run-2")?.status === "completed") break;
+    }
+    expect(runs.getRun("run-2")?.status).toBe("completed");
+    const profiles = delivery.listStyleProfiles("p1", true);
+    const draft = profiles.find((profile) => profile.source === "extract:run-2");
+    expect(draft).toMatchObject({
+      name: "冷峻短句 2",
+      active: false,
+      status: "active",
+    });
+    // 提炼草稿不得挤掉作者已启用的档案。
+    expect(
+      profiles.find((profile) => profile.id === "style-existing"),
+    ).toMatchObject({ active: true });
   });
 });
 

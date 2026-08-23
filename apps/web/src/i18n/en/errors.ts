@@ -456,6 +456,8 @@ export const errors: typeof errorsZh = {
     storySteerNotFound: "story_steer {id} does not exist",
     storyTurnNotFound: "story_turn {id} does not exist",
     styleNameConflict: "A style with this name already exists in this project; please choose another name",
+    styleExtractIdempotencyConflict:
+      "The same requestId was already used for a different style extraction request; refresh and retry.",
     swipeContentEmpty: "AI candidate must not be empty",
     swipeTurnInvalid: "A swipe can only be attached to an AI turn of the current branch",
     swipeTurnMismatch: "The candidate does not belong to this turn",

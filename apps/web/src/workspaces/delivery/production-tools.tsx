@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Download, FileUp, Save, Sparkles, Trash2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
 import { ErrorNote } from "../../components/error-note";
@@ -15,7 +15,9 @@ import {
   deleteAgentSkill,
   deleteWritingSkill,
   discardStoryImport,
+  extractStyleProfile,
   getAgentSkills,
+  getRunDetail,
   getStyleProfiles,
   getStoryImport,
   getStoryImports,
@@ -50,11 +52,68 @@ export function StyleManager({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient(); const query = useQuery({ queryKey: ["project", projectId, "styles"], queryFn: ({ signal }) => getStyleProfiles(projectId, signal) }); const [selectedId, setSelectedId] = useState("new"); const [showRetired, setShowRetired] = useState(false); const [archiveTarget, setArchiveTarget] = useState<StyleProfile | null>(null); const selected = query.data?.find((style) => style.id === selectedId);
   const mutation = useMutation({ mutationFn: (input: { current: StyleProfile | null; value: Parameters<typeof createStyleProfile>[1] }) => input.current ? updateStyleProfile(input.current, input.value) : createStyleProfile(projectId, input.value), onSuccess: (style) => { setSelectedId(style.id); void queryClient.invalidateQueries({ queryKey: ["project", projectId, "styles"] }); } });
   const lifecycleMutation = useMutation({ mutationFn: ({ style, status }: { style: StyleProfile; status: StyleProfile["status"] }) => updateStyleProfile(style, { status, active: false }), onSuccess: (style) => { setArchiveTarget(null); setSelectedId(style.status === "retired" && !showRetired ? "new" : style.id); void queryClient.invalidateQueries({ queryKey: ["project", projectId, "styles"] }); } });
+  const [extractRunId, setExtractRunId] = useState<string | null>(null);
+  const [extractFailedRunId, setExtractFailedRunId] = useState<string | null>(null);
+  const extractMutation = useMutation({ mutationFn: (text: string) => extractStyleProfile(projectId, { requestId: crypto.randomUUID(), text }), onSuccess: (run) => { setExtractFailedRunId(null); setExtractRunId(run.run.id); } });
+  const extractRunQuery = useQuery({ queryKey: ["run", extractRunId], enabled: Boolean(extractRunId), queryFn: ({ signal }) => getRunDetail(projectId, extractRunId!, signal), refetchInterval: (query) => (query.state.data && RUN_TERMINAL_STATUSES.includes(query.state.data.run.status) ? false : 1_500) });
+  /* 提炼 run 到达终态：成功则刷新列表并选中新草稿（source=extract:{runId}），失败则挂出查看入口。 */
+  useEffect(() => {
+    const detail = extractRunQuery.data;
+    if (!extractRunId || !detail || !RUN_TERMINAL_STATUSES.includes(detail.run.status)) return;
+    setExtractRunId(null);
+    if (detail.run.status !== "completed") {
+      setExtractFailedRunId(detail.run.id);
+      return;
+    }
+    void (async () => {
+      await queryClient.refetchQueries({ queryKey: ["project", projectId, "styles"] });
+      const styles = queryClient.getQueryData<StyleProfile[]>(["project", projectId, "styles"]) ?? [];
+      const draft = styles.find((style) => style.source === `extract:${detail.run.id}`);
+      if (draft) setSelectedId(draft.id);
+    })();
+  }, [extractRunQuery.data, extractRunId, projectId, queryClient]);
   if (query.isPending) return <p>{t("delivery.productionTools.styles.loading")}</p>;
   if (query.isError) return <ErrorNote error={query.error} title={t("delivery.productionTools.styles.loadError")} />;
   const visibleStyles = query.data.filter((style) => showRetired || style.status === "active");
-  return <><div className="production-tools__body"><aside>{visibleStyles.map((style) => <button key={style.id} type="button" data-active={style.id === selectedId} onClick={() => setSelectedId(style.id)}>{style.name}<small>{style.status === "retired" ? t("delivery.productionTools.styles.retired") : style.active ? t("common.action.enable") : t("common.action.disable")} · v{style.version}</small></button>)}<button type="button" data-active={selectedId === "new"} onClick={() => setSelectedId("new")}>{t("delivery.productionTools.styles.newStyle")}</button><button type="button" onClick={() => { setShowRetired((value) => !value); if (showRetired && selected?.status === "retired") setSelectedId("new"); }}>{showRetired ? t("delivery.productionTools.styles.hideRetired") : t("delivery.productionTools.styles.showRetired")}</button></aside><div><StyleForm key={`${selectedId}:${selected?.version ?? "new"}`} style={selected} pending={mutation.isPending || lifecycleMutation.isPending} error={mutation.error ?? lifecycleMutation.error} onSubmit={(value) => mutation.mutate({ current: selected ?? null, value })} />{selected ? <div className="production-tools__skill-actions">{selected.status === "active" ? <button type="button" className="btn" disabled={lifecycleMutation.isPending} onClick={() => setArchiveTarget(selected)}><Trash2 size={12} />{t("delivery.productionTools.styles.archive")}</button> : <button type="button" className="btn" disabled={lifecycleMutation.isPending} onClick={() => lifecycleMutation.mutate({ style: selected, status: "active" })}>{t("delivery.productionTools.styles.restore")}</button>}</div> : null}</div></div>{archiveTarget ? <ConfirmDialog title={t("delivery.productionTools.styles.archive")} confirmLabel={t("delivery.productionTools.styles.archiveDialog.confirm")} danger pending={lifecycleMutation.isPending} onCancel={() => setArchiveTarget(null)} onConfirm={() => lifecycleMutation.mutate({ style: archiveTarget, status: "retired" })}><p>{t("delivery.productionTools.styles.archiveDialog.body")}</p></ConfirmDialog> : null}</>;
+  return <><div className="production-tools__body"><aside>{visibleStyles.map((style) => <button key={style.id} type="button" data-active={style.id === selectedId} onClick={() => setSelectedId(style.id)}>{style.name}<small>{style.status === "retired" ? t("delivery.productionTools.styles.retired") : style.active ? t("common.action.enable") : t("common.action.disable")} · v{style.version}</small></button>)}<button type="button" data-active={selectedId === "new"} onClick={() => setSelectedId("new")}>{t("delivery.productionTools.styles.newStyle")}</button><button type="button" onClick={() => { setShowRetired((value) => !value); if (showRetired && selected?.status === "retired") setSelectedId("new"); }}>{showRetired ? t("delivery.productionTools.styles.hideRetired") : t("delivery.productionTools.styles.showRetired")}</button></aside><div><StyleExtractPanel projectId={projectId} submitting={extractMutation.isPending} running={Boolean(extractRunId)} failedRunId={extractFailedRunId} error={extractMutation.error} onStart={(text) => extractMutation.mutate(text)} onDismissError={() => setExtractFailedRunId(null)} /><StyleForm key={`${selectedId}:${selected?.version ?? "new"}`} style={selected} pending={mutation.isPending || lifecycleMutation.isPending} error={mutation.error ?? lifecycleMutation.error} onSubmit={(value) => mutation.mutate({ current: selected ?? null, value })} />{selected ? <div className="production-tools__skill-actions">{selected.status === "active" ? <button type="button" className="btn" disabled={lifecycleMutation.isPending} onClick={() => setArchiveTarget(selected)}><Trash2 size={12} />{t("delivery.productionTools.styles.archive")}</button> : <button type="button" className="btn" disabled={lifecycleMutation.isPending} onClick={() => lifecycleMutation.mutate({ style: selected, status: "active" })}>{t("delivery.productionTools.styles.restore")}</button>}</div> : null}</div></div>{archiveTarget ? <ConfirmDialog title={t("delivery.productionTools.styles.archive")} confirmLabel={t("delivery.productionTools.styles.archiveDialog.confirm")} danger pending={lifecycleMutation.isPending} onCancel={() => setArchiveTarget(null)} onConfirm={() => lifecycleMutation.mutate({ style: archiveTarget, status: "retired" })}><p>{t("delivery.productionTools.styles.archiveDialog.body")}</p></ConfirmDialog> : null}</>;
 }
+const RUN_TERMINAL_STATUSES: readonly string[] = ["completed", "failed", "cancelled"];
+
+/** 贴样文提炼风格档案：贴一段自己的或参考的文字，AI 提炼成未启用的草稿档案。 */
+function StyleExtractPanel({ projectId, submitting, running, failedRunId, error, onStart, onDismissError }: { projectId: string; submitting: boolean; running: boolean; failedRunId: string | null; error: unknown; onStart: (text: string) => void; onDismissError: () => void }) {
+  const { t } = useI18n();
+  const [text, setText] = useState("");
+  const trimmed = text.trim();
+  const tooShort = trimmed.length > 0 && trimmed.length < 200;
+  const busy = submitting || running;
+  return (
+    <div className="production-tools__extract">
+      <label className="production-tools__extract-label">
+        <span><Sparkles size={12} />{t("delivery.productionTools.styles.extract.label")}</span>
+        <textarea rows={5} placeholder={t("delivery.productionTools.styles.extract.placeholder")} value={text} onChange={(event) => setText(event.target.value)} disabled={busy} />
+      </label>
+      <p className="production-tools__hint">{tooShort ? t("delivery.productionTools.styles.extract.tooShort", { count: trimmed.length }) : t("delivery.productionTools.styles.extract.hint")}</p>
+      <div className="production-tools__extract-actions">
+        <button type="button" className="btn" disabled={busy || trimmed.length < 200} onClick={() => onStart(trimmed)}>
+          <Sparkles size={12} />
+          {busy ? t("delivery.productionTools.styles.extract.running") : t("delivery.productionTools.styles.extract.submit")}
+        </button>
+        {running ? (
+          <span className="mono">{t("delivery.productionTools.styles.extract.runningNote")}</span>
+        ) : null}
+        {failedRunId ? (
+          <>
+            <Link to={`${projectWorkspacePath(projectId, "runs")}?run=${encodeURIComponent(failedRunId)}`}>{t("delivery.productionTools.styles.extract.viewRun")}</Link>
+            <button type="button" className="btn" onClick={onDismissError}>{t("common.action.close")}</button>
+          </>
+        ) : null}
+      </div>
+      {error ? <ErrorNote error={error} title={t("delivery.productionTools.styles.extract.error")} /> : null}
+      {failedRunId ? <ErrorNote error={new Error(t("delivery.productionTools.styles.extract.failed"))} title={t("delivery.productionTools.styles.extract.error")} /> : null}
+    </div>
+  );
+}
+
 function StyleForm({ style, pending, error, onSubmit }: { style: StyleProfile | undefined; pending: boolean; error: unknown; onSubmit: (value: Parameters<typeof createStyleProfile>[1]) => void }) {
   const { t } = useI18n();
   const [name, setName] = useState(style?.name ?? ""); const [description, setDescription] = useState(style?.description ?? ""); const [rules, setRules] = useState(style?.rules.join("\n") ?? ""); const [negativeRules, setNegative] = useState(style?.negativeRules.join("\n") ?? ""); const [examples, setExamples] = useState(style?.examples.join("\n---\n") ?? ""); const [active, setActive] = useState(style?.active ?? true); const lines = (value: string) => value.split("\n").map((line) => line.trim()).filter(Boolean);

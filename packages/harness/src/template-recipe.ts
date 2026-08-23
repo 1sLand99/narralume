@@ -47,6 +47,7 @@ const DEFAULT_ATTEMPTS: Readonly<Record<RunStepKind, number>> = {
   "edit.stage": 1,
   "import.analyze": 5,
   "import.stage": 1,
+  "style.extract": 3,
   "assistant.context": 1,
   "assistant.respond": 5,
   "assistant.stage": 1,

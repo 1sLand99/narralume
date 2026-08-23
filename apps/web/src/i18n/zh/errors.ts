@@ -442,6 +442,8 @@ export const errors = {
     storySteerNotFound: "story_steer {id} 不存在",
     storyTurnNotFound: "story_turn {id} 不存在",
     styleNameConflict: "当前作品已有同名风格，请使用其他名称",
+    styleExtractIdempotencyConflict:
+      "同一 requestId 已用于不同的风格提炼请求，请刷新后重试。",
     swipeContentEmpty: "AI 候选不能为空",
     swipeTurnInvalid: "Swipe 只能附加到当前分支的 AI 回合",
     swipeTurnMismatch: "候选不属于该回合",

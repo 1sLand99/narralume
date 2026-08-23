@@ -15,13 +15,24 @@ const EntitySchema = z.object({
   description: z.string().min(1).max(20_000),
 });
 
-const StyleSchema = z.object({
+export const StyleSchema = z.object({
   name: z.string().min(1).max(200),
   description: z.string().min(1).max(10_000),
   rules: z.array(z.string().min(1).max(2_000)).min(2).max(20),
   negativeRules: z.array(z.string().min(1).max(2_000)).max(20),
   examples: z.array(z.string().min(1).max(1_000)).max(6),
 });
+
+export type StyleProfileDraft = z.infer<typeof StyleSchema>;
+
+/** 贴样文提炼风格档案的结构化契约（与导入分析中的 style 子契约同构）。 */
+export const STYLE_PROFILE_CONTRACT: JsonSchemaContract = {
+  name: "style_profile",
+  description:
+    "An actionable style profile draft distilled from a writing sample.",
+  strict: true,
+  schema: styleContract(),
+};
 
 const SkillSchema = z.object({
   name: z.string().min(1).max(200),

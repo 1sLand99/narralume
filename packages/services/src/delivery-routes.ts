@@ -10,6 +10,7 @@ import {
   CreateStyleProfileRequestSchema,
   CreateWritingSkillRequestSchema,
   DecideImportCandidateRequestSchema,
+  ExtractStyleRequestSchema,
   ImportBatchDetailSchema,
   ImportBatchSchema,
   ImportUploadSessionSchema,
@@ -27,7 +28,7 @@ import {
   WritingSkillValidationSchema,
 } from "@narralume/contracts";
 import type { StyleProfile, WritingSkill } from "@narralume/domain";
-import { buildImportAnalysisRecipe } from "@narralume/harness";
+import { buildImportAnalysisRecipe, buildStyleExtractionRecipe } from "@narralume/harness";
 import {
   SqliteDeliveryRepository,
   SqliteProjectRepository,
@@ -136,6 +137,76 @@ export function registerDeliveryRoutes(
       ),
     );
   });
+
+  // 贴样文提炼风格档案：202 返回后台 run，完成后落一条未启用的 style profile
+  // 草稿（source=extract:{runId}），作者在 StyleManager 里审核编辑后启用。
+  app.route(
+    "POST",
+    "/api/projects/:projectId/styles/extract",
+    async (request) => {
+      const { projectId } = ProjectParamsSchema.parse(request.params);
+      requireProject(projects, projectId);
+      const input = ExtractStyleRequestSchema.parse(request.body);
+      const requestHash = hashRequest(input);
+      const runId = deterministicRequestId(
+        "style-extract-run",
+        projectId,
+        input.requestId,
+      );
+      const existing = runs.getRun(runId) ? runs.getSnapshot(runId) : null;
+      if (existing) {
+        if (existing.run.policy.creationRequestHash !== requestHash) {
+          throw new DeliveryRouteError(
+            "style.extract.idempotency_conflict",
+            "The same requestId was already used for a different style extraction request",
+            409,
+          );
+        }
+        return {
+          status: 202,
+          body: BackgroundRunCreatedSchema.parse({
+            ...existing,
+            ...runProductProjection(existing),
+          }),
+        };
+      }
+      requireWritingAssignment(database, options.environment);
+      const recipe = buildStyleExtractionRecipe(runId);
+      const snapshot = runs.create({
+        id: runId,
+        projectId,
+        recipe: recipe.name,
+        recipeVersion: recipe.version,
+        mode: "manual",
+        targetOutlineNodeId: null,
+        policy: withRuntimeModelPolicy(
+          {
+            sourceText: input.text,
+            creationRequestId: input.requestId,
+            creationRequestHash: requestHash,
+            contextWindow: 32_000,
+            styleExtractMaxOutputTokens: 4_000,
+            origin: {
+              surface: "settings",
+              documentId: null,
+              selection: null,
+            },
+          },
+          options.environment,
+        ),
+        steps: recipe.steps,
+        now: new Date().toISOString(),
+      });
+      if (options.enableBackgroundWorker) options.coordinator.wake();
+      return {
+        status: 202,
+        body: BackgroundRunCreatedSchema.parse({
+          ...snapshot,
+          ...runProductProjection(snapshot),
+        }),
+      };
+    },
+  );
 
   app.route(
     "GET",

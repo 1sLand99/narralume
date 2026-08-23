@@ -627,6 +627,52 @@
   display: none;
 }
 
+/* 贴样文提炼风格面板 */
+.production-tools__extract {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-bottom: 1.1rem;
+  padding: 0.9rem 1rem;
+  border: 1px dashed var(--hairline);
+  border-radius: var(--radius-card);
+}
+.production-tools__extract-label {
+  display: grid;
+  gap: 0.4rem;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: var(--weight-display);
+  letter-spacing: 0.05em;
+}
+.production-tools__extract-label span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.production-tools__extract textarea {
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1.55;
+  resize: vertical;
+}
+.production-tools__extract textarea:focus {
+  border-color: var(--vera-hairline);
+}
+.production-tools__extract-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem;
+  font-size: 0.72rem;
+  color: var(--ink-faint);
+}
+
 /* 表单 */
 .production-tools__form {
   display: grid;

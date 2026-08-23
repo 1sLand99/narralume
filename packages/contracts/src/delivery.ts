@@ -207,6 +207,13 @@ export const AnalyzeImportRequestSchema = z
     policy: ModelExecutionPolicySchema.optional(),
   })
   .strict();
+export const ExtractStyleRequestSchema = z
+  .object({
+    requestId: IdSchema,
+    /** 样文下限 200 字：再短的文本提炼不出稳定的笔法规则。 */
+    text: z.string().trim().min(200).max(20_000),
+  })
+  .strict();
 export const DecideImportCandidateRequestSchema = z.object({
   status: z.enum(["selected", "discarded"]),
 });

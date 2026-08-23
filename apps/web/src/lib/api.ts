@@ -2755,6 +2755,18 @@ export async function updateStyleProfile(
   );
 }
 
+/** 贴样文提炼风格档案：202 返回后台 run，完成后新增一条
+ *  source=extract:{runId} 的未启用草稿，轮询 run 状态后刷新 styles 列表。 */
+export async function extractStyleProfile(
+  projectId: string,
+  input: { requestId: string; text: string },
+): Promise<BackgroundRunCreated> {
+  return requestJson(
+    `/api/projects/${encodeURIComponent(projectId)}/styles/extract`,
+    jsonRequest("POST", input),
+  );
+}
+
 export async function getWritingSkills(
   projectId: string,
   signal?: AbortSignal,
