@@ -44,6 +44,7 @@ import {
   authoredInstructions,
   instructionsFor,
   promptLanguageOf,
+  workCraftLayer,
 } from "./prompt-language.js";
 import { StoryStatePacketBuilder } from "./story-state-packet.js";
 import {
@@ -109,13 +110,29 @@ export class CollaborationWorkerSuite {
   }
 
   /** 替换式指令组装：模板生效内容（override ?? 官方默认）整体替换写作层，
-   *  结构不变量由代码追加，不受模板影响。 */
-  private authoredInstructions(projectId: string, key: string): string {
+   *  结构不变量由代码追加，不受模板影响；craft=true 时追加作品写作法。 */
+  private authoredInstructions(
+    projectId: string,
+    key: string,
+    options?: { craft?: boolean },
+  ): string {
     return authoredInstructions({
       language: promptLanguageOf(this.projects.get(projectId)?.language ?? null),
       templateContent: this.templates.getByKey(key)?.effectiveContent ?? null,
       fallback: promptDefaultInstructions(key),
       invariants: promptInvariants(key),
+      craft: options?.craft ? this.workCraft(projectId) : null,
+    });
+  }
+
+  /** 作品写作法：chapter-draft 的生效写作层，重写产出正文的步骤共用。 */
+  private workCraft(projectId: string): string {
+    return workCraftLayer({
+      language: promptLanguageOf(this.projects.get(projectId)?.language ?? null),
+      templateContent:
+        this.templates.getByKey("prompt.chapter-draft")?.effectiveContent ??
+        null,
+      fallback: promptDefaultInstructions("prompt.chapter-draft"),
     });
   }
 
@@ -673,6 +690,7 @@ export class CollaborationWorkerSuite {
         instructions: this.authoredInstructions(
           snapshot.run.projectId,
           "prompt.cocreate-adoption",
+          { craft: true },
         ),
         messages: [
           {
@@ -1017,6 +1035,7 @@ export class CollaborationWorkerSuite {
         instructions: this.authoredInstructions(
           snapshot.run.projectId,
           "prompt.line-edit",
+          { craft: true },
         ),
         messages: [
           {

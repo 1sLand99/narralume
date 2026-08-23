@@ -32,21 +32,40 @@ export function editableInstructionOf(
   }
 }
 
-/** 替换式指令组装：模板生效内容整体替换默认写作层；结构不变量始终由代码追加，
- *  不受模板内容影响。 */
+/** 作品写作法：chapter-draft 写作层的生效内容（override ?? 官方默认）。
+ *  重写产出正文的步骤（修订、选区编辑、共创场景化）共用，使写作法成为作品属性而非步骤属性。 */
+export function workCraftLayer(options: {
+  language: ProjectLanguage;
+  templateContent: string | null;
+  fallback: Record<ProjectLanguage, string>;
+}): string {
+  const { language, templateContent, fallback } = options;
+  const authored =
+    templateContent === null ? null : editableInstructionOf(templateContent, language);
+  return (authored ?? fallback[language]).trim();
+}
+
+/** 替换式指令组装：模板生效内容整体替换默认写作层；可选 craft 为作品写作法，
+ *  追加在步骤指令之后；结构不变量始终由代码追加，不受模板内容影响。 */
 export function authoredInstructions(options: {
   language: ProjectLanguage;
   templateContent: string | null;
   fallback: Record<ProjectLanguage, string>;
   invariants: Record<ProjectLanguage, string>;
+  craft?: string | null;
 }): string {
-  const { language, templateContent, fallback, invariants } = options;
+  const { language, templateContent, fallback, invariants, craft } = options;
   const authored =
     templateContent === null ? null : editableInstructionOf(templateContent, language);
+  const craftBlock =
+    craft && craft.trim()
+      ? `<writing-craft>\n${craft.trim()}\n</writing-craft>`
+      : null;
   return [
     authored ?? fallback[language],
+    craftBlock,
     invariants[language],
   ]
-    .filter((part) => part.trim().length > 0)
+    .filter((part) => part !== null && part.trim().length > 0)
     .join("\n");
 }

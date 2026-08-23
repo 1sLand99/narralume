@@ -746,6 +746,16 @@ describe("ChapterWorkerSuite", () => {
 
     const snapshot = runs.getSnapshot("run-noop");
     expect(snapshot.run.status).toBe("completed");
+    const revisionRequest = model.text.mock.calls.find(
+      ([, , purpose]) => purpose === "chapter-revision",
+    )?.[3];
+    expect(revisionRequest?.instructions).toContain("<writing-craft>");
+    expect(revisionRequest?.instructions).toContain("先对抗你的本能");
+    expect(
+      revisionRequest!.instructions.indexOf("先对抗你的本能"),
+    ).toBeLessThan(
+      revisionRequest!.instructions.indexOf("不要为了润色而全篇换风格"),
+    );
     expect(
       database.raw
         .prepare(

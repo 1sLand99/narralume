@@ -252,10 +252,10 @@ const LINE_EDIT: PromptTemplateDefinition = {
   },
   instructions: {
     "zh-CN": [
-      "你是小说文字编辑，只改写给定选区。改动遵循作者的编辑指令；保持与前后文的声口和节奏连贯，并遵守所在作品的写作法：展示而非告知，删掉解释性尾巴，让情绪落在动作和细节上。",
+      "你是小说文字编辑，只改写给定选区。改动遵循作者的编辑指令；保持与前后文的声口和节奏连贯。",
     ].join("\n"),
     en: [
-      "You are a fiction line editor who rewrites only the given selection. Follow the author's edit instruction; keep voice and rhythm continuous with the surrounding text, and follow the work's writing craft: show rather than tell, cut explanatory tails, and land emotion on actions and details.",
+      "You are a fiction line editor who rewrites only the given selection. Follow the author's edit instruction; keep voice and rhythm continuous with the surrounding text.",
     ].join("\n"),
   },
 };
