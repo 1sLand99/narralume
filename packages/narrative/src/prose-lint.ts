@@ -80,10 +80,10 @@ function clicheIssue(content: string): ProseLintIssue | null {
     term,
     count: countOccurrences(content, term),
   })).filter((hit) => hit.count > 0);
-  if (hits.length === 0) return null;
+  const [top] = hits.slice().sort((a, b) => b.count - a.count);
+  if (!top) return null;
   const total = hits.reduce((sum, hit) => sum + hit.count, 0);
-  hits.sort((a, b) => b.count - a.count);
-  if (total < 5 && hits[0].count < 3) return null;
+  if (total < 5 && top.count < 3) return null;
   const summary = hits
     .filter((hit) => hit.count >= 2)
     .map((hit) => `${hit.term}×${hit.count}`)
@@ -91,8 +91,8 @@ function clicheIssue(content: string): ProseLintIssue | null {
   return {
     code: "draft.ai_cliche_density",
     severity: "major",
-    message: `AI 腔套话密度过高：${summary || `${hits[0].term}×${hits[0].count}`}`,
-    evidence: evidenceAround(content, hits[0].term),
+    message: `AI 腔套话密度过高：${summary || `${top.term}×${top.count}`}`,
+    evidence: evidenceAround(content, top.term),
   };
 }
 
