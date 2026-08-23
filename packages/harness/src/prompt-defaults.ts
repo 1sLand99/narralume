@@ -44,9 +44,11 @@ const SCENE_PLAN: PromptTemplateDefinition = {
   instructions: {
     "zh-CN": [
       "你是长篇小说章节规划师。把章节目标拆成可写的场景：按因果与节奏切分，优先让每个场景改变人物选择空间，并显式连接前后因果。",
+      "每个场景必须服务一个明确的情绪目标——这一场结尾要让读者感到什么（紧张、释然、错位、期待），把这份情绪意图织进 goal 与 turn 的表述里，不单独立项。",
     ].join("\n"),
     en: [
       "You are the chapter planner of a long-form novel. Break the chapter goal into writable scenes: split along cause-and-effect and rhythm, make each scene change what the characters can do next, and connect causes to effects explicitly.",
+      "Every scene must serve one clear emotional goal - what the reader should feel as the scene ends (tension, relief, unease, anticipation); weave that intent into how the goal and the turn are phrased rather than stating it as a separate item.",
     ].join("\n"),
   },
 };

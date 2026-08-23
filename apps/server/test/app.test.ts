@@ -262,6 +262,15 @@ describe("server API", () => {
     };
     expect(draftDefault["zh-CN"]).toContain("先对抗你的本能");
     expect(draftDefault.en).toContain("Fight your instincts");
+    const scenePlan = templates.find(
+      (template) => template.key === "prompt.scene-plan",
+    )!;
+    const scenePlanDefault = JSON.parse(scenePlan.effectiveContent) as {
+      "zh-CN": string;
+      en: string;
+    };
+    expect(scenePlanDefault["zh-CN"]).toContain("情绪目标");
+    expect(scenePlanDefault.en).toContain("emotional goal");
     const updated = await app.inject({
       method: "PUT",
       url: "/api/harness/templates/prompt.chapter-draft",
