@@ -201,7 +201,9 @@ describe("DeliveryWorkerSuite", () => {
       structured: vi.fn(
         async (_run, _step, purpose, request, _contract, validate) => {
           expect(purpose).toBe("style-extract");
-          expect(String(request.messages[0]?.content)).toContain("雨下了一整夜");
+          expect(String(request.messages[0]?.content)).toContain(
+            "雨下了一整夜",
+          );
           const checked = validate({
             name: "冷峻短句",
             description: "克制、以动作推进的语感。",
@@ -260,7 +262,9 @@ describe("DeliveryWorkerSuite", () => {
     }
     expect(runs.getRun("run-2")?.status).toBe("completed");
     const profiles = delivery.listStyleProfiles("p1", true);
-    const draft = profiles.find((profile) => profile.source === "extract:run-2");
+    const draft = profiles.find(
+      (profile) => profile.source === "extract:run-2",
+    );
     expect(draft).toMatchObject({
       name: "冷峻短句 2",
       active: false,

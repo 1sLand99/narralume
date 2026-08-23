@@ -117,7 +117,9 @@ export class CollaborationWorkerSuite {
     options?: { craft?: boolean },
   ): string {
     return authoredInstructions({
-      language: promptLanguageOf(this.projects.get(projectId)?.language ?? null),
+      language: promptLanguageOf(
+        this.projects.get(projectId)?.language ?? null,
+      ),
       templateContent: this.templates.getByKey(key)?.effectiveContent ?? null,
       fallback: promptDefaultInstructions(key),
       invariants: promptInvariants(key),
@@ -128,7 +130,9 @@ export class CollaborationWorkerSuite {
   /** 作品写作法：chapter-draft 的生效写作层，重写产出正文的步骤共用。 */
   private workCraft(projectId: string): string {
     return workCraftLayer({
-      language: promptLanguageOf(this.projects.get(projectId)?.language ?? null),
+      language: promptLanguageOf(
+        this.projects.get(projectId)?.language ?? null,
+      ),
       templateContent:
         this.templates.getByKey("prompt.chapter-draft")?.effectiveContent ??
         null,

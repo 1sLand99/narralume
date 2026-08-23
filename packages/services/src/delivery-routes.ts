@@ -28,7 +28,10 @@ import {
   WritingSkillValidationSchema,
 } from "@narralume/contracts";
 import type { StyleProfile, WritingSkill } from "@narralume/domain";
-import { buildImportAnalysisRecipe, buildStyleExtractionRecipe } from "@narralume/harness";
+import {
+  buildImportAnalysisRecipe,
+  buildStyleExtractionRecipe,
+} from "@narralume/harness";
 import {
   SqliteDeliveryRepository,
   SqliteProjectRepository,

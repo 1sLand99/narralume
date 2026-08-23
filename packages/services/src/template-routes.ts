@@ -56,7 +56,8 @@ export function registerTemplateRoutes(
     const current = templates.getByKey(key);
     if (current?.kind === "recipe")
       validateRecipeTemplateContent(key, input.content);
-    if (current?.kind === "prompt") validatePromptTemplateContent(input.content);
+    if (current?.kind === "prompt")
+      validatePromptTemplateContent(input.content);
     return HarnessTemplateSchema.parse(
       templates.updateOverride(
         key,

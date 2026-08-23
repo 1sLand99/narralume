@@ -41,7 +41,9 @@ export function workCraftLayer(options: {
 }): string {
   const { language, templateContent, fallback } = options;
   const authored =
-    templateContent === null ? null : editableInstructionOf(templateContent, language);
+    templateContent === null
+      ? null
+      : editableInstructionOf(templateContent, language);
   return (authored ?? fallback[language]).trim();
 }
 
@@ -56,16 +58,14 @@ export function authoredInstructions(options: {
 }): string {
   const { language, templateContent, fallback, invariants, craft } = options;
   const authored =
-    templateContent === null ? null : editableInstructionOf(templateContent, language);
+    templateContent === null
+      ? null
+      : editableInstructionOf(templateContent, language);
   const craftBlock =
     craft && craft.trim()
       ? `<writing-craft>\n${craft.trim()}\n</writing-craft>`
       : null;
-  return [
-    authored ?? fallback[language],
-    craftBlock,
-    invariants[language],
-  ]
+  return [authored ?? fallback[language], craftBlock, invariants[language]]
     .filter((part) => part !== null && part.trim().length > 0)
     .join("\n");
 }

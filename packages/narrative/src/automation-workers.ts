@@ -86,7 +86,9 @@ export class AutomationWorkerSuite {
    *  结构不变量由代码追加，不受模板影响。 */
   private authoredInstructions(projectId: string, key: string): string {
     return authoredInstructions({
-      language: promptLanguageOf(this.projects.get(projectId)?.language ?? null),
+      language: promptLanguageOf(
+        this.projects.get(projectId)?.language ?? null,
+      ),
       templateContent: this.templates.getByKey(key)?.effectiveContent ?? null,
       fallback: promptDefaultInstructions(key),
       invariants: promptInvariants(key),

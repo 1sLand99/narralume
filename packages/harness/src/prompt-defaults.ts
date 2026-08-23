@@ -100,15 +100,15 @@ const CHAPTER_DRAFT_INSTRUCTIONS_EN = [
   "",
   "[Fight your instincts] These are language-model writing habits; deliberately counter each one:",
   "- You tend to close every paragraph as a full arc of setup, development, result, and reflection - cut the reflection; stop on an action or a half-formed thought.",
-  "- You tend to pad actions with soft adverbs (\"slowly\", \"lightly\", \"faintly\") - delete them and replace with concrete actions and details.",
+  '- You tend to pad actions with soft adverbs ("slowly", "lightly", "faintly") - delete them and replace with concrete actions and details.',
   "- You tend to give every character the same reactions (pupils contracting, heart sinking) - keep only the reactions and speech habits that belong to each character.",
   "- You tend to add an explanation right after showing something - cut it and trust the reader.",
   "- You tend to make dialogue sound like a formal debate where every line fully answers the last - allow interruptions, silence, non sequiturs, and half-finished sentences.",
   "",
   "[Point-of-view discipline] Nail the camera to the POV character; write only what they can see, hear, and think right now:",
-  "- No explanatory tone: never write \"the reason was...\", \"it turned out...\", or \"this meant...\"; readers assemble causality from action and dialogue.",
-  "- No god's-eye spoilers: never write \"what she didn't know was...\", \"little did he know\", or \"years later\".",
-  "- Never summarize a character's mind (\"he finally understood...\"); use a biased flash of thought or one physical reaction instead.",
+  '- No explanatory tone: never write "the reason was...", "it turned out...", or "this meant..."; readers assemble causality from action and dialogue.',
+  '- No god\'s-eye spoilers: never write "what she didn\'t know was...", "little did he know", or "years later".',
+  '- Never summarize a character\'s mind ("he finally understood..."); use a biased flash of thought or one physical reaction instead.',
   "",
   "[Sentences and paragraphs] Default narration to comma-linked clauses that carry two to four actions or facts before the period. Short sentences are emphasis beats for turns and peaks - return to flowing sentences after them; never let the whole page read like an outline. One beat per paragraph, lengths alternating: compress turns and payoffs, let atmosphere and reasoning breathe.",
   "",
@@ -116,7 +116,7 @@ const CHAPTER_DRAFT_INSTRUCTIONS_EN = [
   "",
   "[Dialogue] Prefer advancing through dialogue over narrating it. Lines need colloquial grain; two lines should be enough to tell who is speaking. Use speech tags sparingly; lead into dialogue with actions instead. Inner snark carries the character's bias and tone - it is them thinking, not the narrator explaining. Humor comes from friction between characters, not from the narrator being clever.",
   "",
-  "[Endings] Close the chapter on an action, a line of dialogue, or an unresolved image, leaving at least one question hanging. No summary, no uplifted moral, no \"in this moment he understood\", no foreshadowing narration - never land safely.",
+  '[Endings] Close the chapter on an action, a line of dialogue, or an unresolved image, leaving at least one question hanging. No summary, no uplifted moral, no "in this moment he understood", no foreshadowing narration - never land safely.',
 ].join("\n");
 
 const CHAPTER_DRAFT: PromptTemplateDefinition = {
@@ -325,7 +325,9 @@ export const PROMPT_TEMPLATE_DEFINITIONS: readonly PromptTemplateDefinition[] =
   ];
 
 /** 序列化为模板存储内容（双语 JSON）。 */
-export function serializeBilingualPromptText(text: BilingualPromptText): string {
+export function serializeBilingualPromptText(
+  text: BilingualPromptText,
+): string {
   return JSON.stringify({ "zh-CN": text["zh-CN"], en: text.en }, null, 2);
 }
 
