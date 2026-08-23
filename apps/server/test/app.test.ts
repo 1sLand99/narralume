@@ -250,7 +250,18 @@ describe("server API", () => {
     const draft = templates.find(
       (template) => template.key === "prompt.chapter-draft",
     )!;
-    expect(draft.systemInvariants).toContain("锁定正典");
+    const draftInvariants = JSON.parse(draft.systemInvariants) as {
+      "zh-CN": string;
+      en: string;
+    };
+    expect(draftInvariants["zh-CN"]).toContain("锁定正典");
+    expect(draftInvariants.en).toContain("locked canon wins");
+    const draftDefault = JSON.parse(draft.effectiveContent) as {
+      "zh-CN": string;
+      en: string;
+    };
+    expect(draftDefault["zh-CN"]).toContain("先对抗你的本能");
+    expect(draftDefault.en).toContain("Fight your instincts");
     const updated = await app.inject({
       method: "PUT",
       url: "/api/harness/templates/prompt.chapter-draft",

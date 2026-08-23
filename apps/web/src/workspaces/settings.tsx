@@ -66,6 +66,7 @@ import {
   wireApiLabel,
 } from "../lib/labels";
 import { projectWorkspacePath } from "../lib/project-route";
+import { PromptTemplatesSection } from "./settings/prompt-templates";
 import { ProductionTools } from "./delivery/production-tools";
 
 /* 设置：默认生成模型与岗位继承（写作/规划/审稿在未覆盖时继承默认生成模型）、
@@ -310,6 +311,8 @@ export function SettingsWorkspace() {
           </details>
         ) : null}
       </section>
+
+      <PromptTemplatesSection />
 
       <details className="settings__channel-management" aria-label={t("settings.channels.label")}>
         <summary>

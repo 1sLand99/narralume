@@ -210,6 +210,41 @@ export const settings: typeof settingsZh = {
     deleteModel:
       "Model \"{name}\" will be deleted. If it is still referenced by roles or run history, the server will refuse and provide next steps.",
   },
+  prompts: {
+    label: "Prompt templates",
+    hint: "Official default instructions for generation steps. Changes apply to subsequent generations immediately; restore the official default at any time. Structural rules (locked canon, output format) are always enforced by the system and unaffected by edits.",
+    loadError: "Prompt templates are temporarily unavailable",
+    modified: "Modified",
+    officialDefault: "Official default",
+    invariantLabel: "These structural rules are always appended by the system:",
+    zhLabel: "Chinese instructions (used by zh-CN works)",
+    enLabel: "English instructions (used by en works)",
+    saveAction: "Save changes",
+    saveErrorTitle: "Save not completed",
+    restoreAction: "Restore official default",
+    items: {
+      chapterDraft: {
+        name: "Chapter prose",
+        description: "Generates chapter prose from the compiled context and scene plan.",
+      },
+      chapterRevision: {
+        name: "Chapter revision",
+        description: "Applies minimal sufficient revisions to evidenced issues.",
+      },
+      lineEdit: {
+        name: "Selection editor",
+        description: "Rewrites the selected text per the author's instruction.",
+      },
+      cocreateAdoption: {
+        name: "Co-write adoption",
+        description: "Turns a chosen co-writing turn into novel scene prose.",
+      },
+      bookFoundation: {
+        name: "Book foundation planner",
+        description: "Shapes the author's inspiration into selectable foundation candidates.",
+      },
+    },
+  },
   modelNames: {
     unknownModel: "Unknown model",
     unknownChannel: "Unknown provider",

@@ -22,7 +22,7 @@ import {
   RunPersistenceError,
   TemplatePersistenceError,
 } from "@narralume/persistence";
-import { RecipeTemplateError } from "@narralume/harness";
+import { RecipeTemplateError, PromptTemplateError } from "@narralume/harness";
 import {
   AgentSkillImportError,
   AssistantRouteError,
@@ -204,6 +204,9 @@ export function mapRouteError(
     return { status: 422, code: error.code, message: error.message };
   }
   if (error instanceof RecipeTemplateError) {
+    return { status: 422, code: error.code, message: error.message };
+  }
+  if (error instanceof PromptTemplateError) {
     return { status: 422, code: error.code, message: error.message };
   }
   log(error, "request failed");

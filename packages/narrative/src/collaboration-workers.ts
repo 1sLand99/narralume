@@ -16,6 +16,10 @@ import type {
   WorkerRegistry,
 } from "@narralume/harness";
 import {
+  promptDefaultInstructions,
+  promptInvariants,
+} from "@narralume/harness";
+import {
   SqliteCanonRepository,
   SqliteContextReceiptRepository,
   SqliteCreativeRepository,
@@ -26,6 +30,7 @@ import {
   SqliteRetrievalRepository,
   SqliteReviewRepository,
   SqliteStoryRepository,
+  SqliteTemplateRepository,
   type NarrativeDatabase,
 } from "@narralume/persistence";
 
@@ -35,7 +40,11 @@ import {
   recordEmbeddingDegradation,
 } from "./embedding-support.js";
 import { outlineContextSources } from "./outline-context.js";
-import { instructionsFor } from "./prompt-language.js";
+import {
+  authoredInstructions,
+  instructionsFor,
+  promptLanguageOf,
+} from "./prompt-language.js";
 import { StoryStatePacketBuilder } from "./story-state-packet.js";
 import {
   ADOPTION_RESULT_CONTRACT,
@@ -68,6 +77,7 @@ export class CollaborationWorkerSuite {
   private readonly state: SqliteNarrativeStateRepository;
   private readonly delivery: SqliteDeliveryRepository;
   private readonly compiler: ContextCompiler;
+  private readonly templates: SqliteTemplateRepository;
   private readonly storyState: StoryStatePacketBuilder;
 
   constructor(
@@ -90,11 +100,23 @@ export class CollaborationWorkerSuite {
     );
     this.delivery = new SqliteDeliveryRepository(database);
     this.compiler = new ContextCompiler(now);
+    this.templates = new SqliteTemplateRepository(database);
     this.storyState = new StoryStatePacketBuilder(
       this.canon,
       this.state,
       this.story,
     );
+  }
+
+  /** 替换式指令组装：模板生效内容（override ?? 官方默认）整体替换写作层，
+   *  结构不变量由代码追加，不受模板影响。 */
+  private authoredInstructions(projectId: string, key: string): string {
+    return authoredInstructions({
+      language: promptLanguageOf(this.projects.get(projectId)?.language ?? null),
+      templateContent: this.templates.getByKey(key)?.effectiveContent ?? null,
+      fallback: promptDefaultInstructions(key),
+      invariants: promptInvariants(key),
+    });
   }
 
   registry(): WorkerRegistry {
@@ -648,20 +670,9 @@ export class CollaborationWorkerSuite {
       step,
       "cocreate-adoption",
       {
-        instructions: instructionsFor(
-          this.projects.get(snapshot.run.projectId)?.language ?? null,
-          {
-            "zh-CN": [
-              "把已选共创回合整理成可进入正文的小说场景。导演注是改写指令，不得原样出现在 sceneContent。",
-              "保留发生过的行动、对白含义与角色能动性，补足必要的叙述连接，但不要擅自增加重大事件。",
-              "sceneContent 只输出场景正文，不含标题或 Markdown 围栏。canonCandidates 仅列正文有直接证据的新事实，并用 evidenceParagraphs 返回 sceneContent 中从 1 开始的段落序号；多段证据使用数组。",
-            ],
-            en: [
-              "Turn the chosen co-writing turn into a novel scene ready for the manuscript. Director's notes are rewrite instructions and must not appear verbatim in sceneContent.",
-              "Preserve actions that happened, the meaning of dialogue, and character agency; supply necessary narrative connective tissue but never invent major events on your own.",
-              "sceneContent outputs only scene prose without titles or Markdown fences. canonCandidates lists only new facts directly evidenced in the prose, returning 1-based paragraph indexes into sceneContent through evidenceParagraphs; use an array for multiple paragraphs.",
-            ],
-          },
+        instructions: this.authoredInstructions(
+          snapshot.run.projectId,
+          "prompt.cocreate-adoption",
         ),
         messages: [
           {
@@ -1003,20 +1014,9 @@ export class CollaborationWorkerSuite {
       step,
       "selection-edit",
       {
-        instructions: instructionsFor(
-          this.projects.get(snapshot.run.projectId)?.language ?? null,
-          {
-            "zh-CN": [
-              "你是小说文字编辑，只改写给定选区。返回 replacementText，不输出全文、解释前缀或 Markdown 围栏。",
-              "保持选区之外的事实、视角和时态；若指令会改变正典或事件结果，将 risk 标为 high，但仍给出最保守的候选。",
-              "不要模仿在世作者。",
-            ],
-            en: [
-              "You are a fiction line editor who rewrites only the given selection. Return replacementText with no full text, explanation prefixes, or Markdown fences.",
-              "Preserve facts, point of view, and tense outside the selection; if the instruction would change canon or event outcomes, set risk to high while still giving the most conservative candidate.",
-              "Do not imitate living authors.",
-            ],
-          },
+        instructions: this.authoredInstructions(
+          snapshot.run.projectId,
+          "prompt.line-edit",
         ),
         messages: [
           {

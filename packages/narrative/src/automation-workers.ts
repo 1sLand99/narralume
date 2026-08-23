@@ -13,11 +13,16 @@ import type {
   WorkerRegistry,
 } from "@narralume/harness";
 import {
+  promptDefaultInstructions,
+  promptInvariants,
+} from "@narralume/harness";
+import {
   SqliteAutomationRepository,
   SqliteCanonRepository,
   SqliteNarrativeStateRepository,
   SqliteProjectRepository,
   SqliteStoryRepository,
+  SqliteTemplateRepository,
   type NarrativeDatabase,
 } from "@narralume/persistence";
 
@@ -35,7 +40,11 @@ import {
   SteerClassificationResultSchema,
 } from "./automation-schemas.js";
 import { fingerprint } from "./canon-candidate-context.js";
-import { instructionsFor } from "./prompt-language.js";
+import {
+  authoredInstructions,
+  instructionsFor,
+  promptLanguageOf,
+} from "./prompt-language.js";
 import { StoryStatePacketBuilder } from "./story-state-packet.js";
 import {
   requireActiveProject,
@@ -48,6 +57,7 @@ export class AutomationWorkerSuite {
   private readonly story: SqliteStoryRepository;
   private readonly canon: SqliteCanonRepository;
   private readonly state: SqliteNarrativeStateRepository;
+  private readonly templates: SqliteTemplateRepository;
   private readonly storyState: StoryStatePacketBuilder;
 
   constructor(
@@ -64,11 +74,23 @@ export class AutomationWorkerSuite {
       this.canon,
       this.story,
     );
+    this.templates = new SqliteTemplateRepository(database);
     this.storyState = new StoryStatePacketBuilder(
       this.canon,
       this.state,
       this.story,
     );
+  }
+
+  /** 替换式指令组装：模板生效内容（override ?? 官方默认）整体替换写作层，
+   *  结构不变量由代码追加，不受模板影响。 */
+  private authoredInstructions(projectId: string, key: string): string {
+    return authoredInstructions({
+      language: promptLanguageOf(this.projects.get(projectId)?.language ?? null),
+      templateContent: this.templates.getByKey(key)?.effectiveContent ?? null,
+      fallback: promptDefaultInstructions(key),
+      invariants: promptInvariants(key),
+    });
   }
 
   registry(): WorkerRegistry {
@@ -128,20 +150,10 @@ export class AutomationWorkerSuite {
       step,
       "book-foundation",
       {
-        instructions: instructionsFor(project.language, {
-          "zh-CN": [
-            "你是长篇小说总策划。把作者的原始灵感整理成可选择的建书候选，而不是替作者宣告正典。",
-            "保持创意具体、可持续写作、角色有欲望与代价。不要模仿在世作者。",
-            "所有字段必须完整；边界应尊重作者原话，不能擅自添加猎奇内容。",
-            "规划规模只属于故事指南针的 compass.target，不属于作者意图。除非作者素材原文明确提出相同限制，不得把目标章节数、每章字数或卷数写入 intent.boundaries、intent.currentFocus 或其他作者意图字段。",
-          ],
-          en: [
-            "You are the chief planner of a long-form novel. Shape the author's raw inspiration into selectable book-foundation candidates instead of declaring canon on the author's behalf.",
-            "Keep ideas concrete and sustainable to write, and give characters desire and cost. Do not imitate living authors.",
-            "Every field must be complete; boundaries must respect the author's own words and never add sensational content on their own.",
-            "Planning scale belongs only to the story compass's compass.target, not to author intent. Unless the author's source material explicitly states the same limits, never write target chapter counts, per-chapter lengths, or volume counts into intent.boundaries, intent.currentFocus, or other author-intent fields.",
-          ],
-        }),
+        instructions: this.authoredInstructions(
+          project.id,
+          "prompt.book-foundation",
+        ),
         messages: [
           {
             role: "user",

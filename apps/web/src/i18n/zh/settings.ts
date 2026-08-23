@@ -198,6 +198,41 @@ export const settings = {
       "将删除模型渠道「{name}」。若仍有模型、派岗或环境托管约束，服务端会拒绝并给出下一步。",
     deleteModel: "将删除模型「{name}」。若仍被岗位或运行历史引用，服务端会拒绝并给出下一步。",
   },
+  prompts: {
+    label: "提示词模板",
+    hint: "生成类步骤的官方默认指令。修改后对之后的生成立即生效；恢复官方默认可随时回到内置版本。锁定正典等结构规则由系统强制追加，不受修改影响。",
+    loadError: "提示词模板暂时无法加载",
+    modified: "已修改",
+    officialDefault: "官方默认",
+    invariantLabel: "以下结构规则始终由系统强制追加：",
+    zhLabel: "中文指令（zh-CN 作品使用）",
+    enLabel: "英文指令（en 作品使用）",
+    saveAction: "保存修改",
+    saveErrorTitle: "保存未完成",
+    restoreAction: "恢复官方默认",
+    items: {
+      chapterDraft: {
+        name: "章节正文",
+        description: "依据已编译上下文和场景计划生成章节正文。",
+      },
+      chapterRevision: {
+        name: "章节修订",
+        description: "针对已举证问题形成最小充分修订。",
+      },
+      lineEdit: {
+        name: "选区文字编辑",
+        description: "按作者指令改写选中文字。",
+      },
+      cocreateAdoption: {
+        name: "共创场景化",
+        description: "把选定的共创回合整理为小说场景正文。",
+      },
+      bookFoundation: {
+        name: "建书候选策划",
+        description: "把作者灵感整理成可选的建书候选。",
+      },
+    },
+  },
   modelNames: {
     unknownModel: "未知模型",
     unknownChannel: "未知渠道",
