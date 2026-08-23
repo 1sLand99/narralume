@@ -56,6 +56,7 @@ import {
   SettlementConflictError,
 } from "./settlement-application-service.js";
 import { authoredInstructions, promptLanguageOf } from "./prompt-language.js";
+import { proseLintIssues } from "./prose-lint.js";
 import {
   promptDefaultInstructions,
   promptInvariants,
@@ -884,15 +885,7 @@ export class ChapterWorkerSuite {
         evidence: repeatedPhrase,
       });
     }
-    const cliche = repeatedCliche(content);
-    if (cliche) {
-      issues.push({
-        code: "draft.cliche_density",
-        severity: "major",
-        message: "正文中过度重复常见套话",
-        evidence: cliche,
-      });
-    }
+    issues.push(...proseLintIssues(content));
     return {
       artifactKind: "deterministic-review",
       output: {
@@ -2267,28 +2260,6 @@ function repeatedPhraseEvidence(
     const count = (counts.get(phrase) ?? 0) + 1;
     if (count >= threshold) return phrase;
     counts.set(phrase, count);
-  }
-  return null;
-}
-
-function repeatedCliche(content: string): string | null {
-  const patterns = [
-    "不禁",
-    "仿佛",
-    "宛如",
-    "一丝",
-    "嘴角勾起",
-    "眼底闪过",
-    "空气仿佛凝固",
-  ];
-  for (const pattern of patterns) {
-    let count = 0;
-    let offset = 0;
-    while ((offset = content.indexOf(pattern, offset)) >= 0) {
-      count += 1;
-      offset += pattern.length;
-    }
-    if (count >= 5) return `${pattern}（${count} 次）`;
   }
   return null;
 }
