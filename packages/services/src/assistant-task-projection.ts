@@ -21,6 +21,10 @@ import {
 
 import { runProductProjection } from "./run-policy.js";
 import {
+  sessionAvailableActions,
+  sessionStopReason,
+} from "./automation-service.js";
+import {
   activityProgress,
   activityText,
   toolGoalParams,
@@ -77,9 +81,7 @@ export class AssistantTaskProjectionService {
           session.chapterPolicy.origin,
           session.currentOutlineNodeId,
         );
-        const reason = child
-          ? latestRunReason(child)
-          : errorCode(session.lastError);
+        const reason = sessionStopReason(session, child);
         const planningOnly = session.chapterPolicy.planningOnly === true;
         return AssistantActivitySchema.parse({
           id: `autopilot:${session.id}`,
@@ -118,7 +120,11 @@ export class AssistantTaskProjectionService {
                   })
               : null,
           waitingReason: reason,
-          availableActions: sessionActions(session.status, reason),
+          availableActions: sessionAvailableActions(
+            session.status,
+            reason,
+            child?.run.status ?? null,
+          ),
           sourceType: "autopilot",
           sourceId: session.id,
           origin,
@@ -661,24 +667,6 @@ function sessionStage(
       });
 }
 
-function sessionActions(status: string, reason: string | null): string[] {
-  if (["pending", "planning", "running"].includes(status))
-    return ["pause", "cancel"];
-  if (status === "paused") return ["resume", "cancel"];
-  if (status === "failed")
-    return ["retry-current", "skip-chapter", "replan", "stop"];
-  if (status !== "awaiting_user") return [];
-  if (reason === "chapter_commit_approval_required") {
-    return ["accept_manuscript", "request_revision", "cancel"];
-  }
-  if (reason === "scene_plan_approval_required")
-    return ["accept_plan", "cancel"];
-  if (reason === "settlement_conflict_requires_resolution") {
-    return ["cancel"];
-  }
-  return ["cancel"];
-}
-
 function latestRunReason(snapshot: RunSnapshot): string | null {
   const event = [...snapshot.events]
     .reverse()
@@ -722,10 +710,6 @@ function assistantContext(
         : null,
     selection,
   };
-}
-
-function errorCode(value: unknown): string | null {
-  return isRecord(value) && typeof value.code === "string" ? value.code : null;
 }
 
 function stringValue(value: unknown, key: string): string | null {

@@ -1459,6 +1459,7 @@ function activityActionId(activity: AssistantActivityDto): string | null {
 const PRODUCT_DECISION_ACTIONS = new Set([
   "accept_plan",
   "accept_manuscript",
+  "keep_manuscript",
   "request_revision",
   "discard_manuscript",
 ]);

@@ -41,6 +41,7 @@ import { migration037 } from "./migrations/037-assistant-conversation-settings.j
 import { migration038 } from "./migrations/038-drop-run-budget-limits.js";
 import { migration039 } from "./migrations/039-resource-lifecycle.js";
 import { migration040 } from "./migrations/040-project-write-guard.js";
+import { migration041 } from "./migrations/041-review-author-decisions.js";
 
 export interface Migration {
   readonly version: number;
@@ -103,6 +104,7 @@ const MIGRATIONS: readonly Migration[] = [
   migration038,
   migration039,
   migration040,
+  migration041,
 ];
 
 interface MigrationRow {

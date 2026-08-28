@@ -71,9 +71,6 @@ export class AutopilotCoordinator {
     if (["completed", "cancelled", "failed"].includes(session.status)) {
       return false;
     }
-    if (["paused", "awaiting_user"].includes(session.status)) {
-      return false;
-    }
     if (session.cancelRequested) {
       if (session.currentRunId) {
         const child = this.runs.getSnapshot(session.currentRunId).run;
@@ -86,15 +83,32 @@ export class AutopilotCoordinator {
           }
           return false;
         }
+        const link = this.automation.requireRunLink(session.id, child.id);
         this.automation.markRunProcessed(
           session.id,
           child.id,
           child.status,
           now,
         );
+        if (
+          child.status !== "completed" &&
+          link.role === "chapter" &&
+          link.outlineNodeId
+        ) {
+          this.story.updateOutlineStatus(
+            session.projectId,
+            link.outlineNodeId,
+            "planned",
+            now,
+          );
+        }
       }
       this.automation.setSessionStatus(session.id, "cancelled", now);
       return this.changed(session.id, "session.cancelled");
+    }
+
+    if (["paused", "awaiting_user"].includes(session.status)) {
+      return false;
     }
 
     if (session.pauseRequested) {

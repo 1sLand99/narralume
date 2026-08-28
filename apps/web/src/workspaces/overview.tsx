@@ -183,7 +183,7 @@ function ActiveTaskCard({ projectId, task }: { projectId: string; task: ProjectO
     },
   });
   const directActions = task.availableActions.filter((action) => ["pause", "resume", "retry-current", "skip-chapter", "replan", "stop"].includes(action));
-  const needsProductDecision = task.availableActions.some((action) => ["accept_plan", "accept_manuscript", "request_revision", "discard_manuscript"].includes(action)) || task.stopReason === "settlement_conflict_requires_resolution";
+  const needsProductDecision = task.availableActions.some((action) => ["accept_plan", "accept_manuscript", "keep_manuscript", "request_revision", "discard_manuscript"].includes(action)) || task.stopReason === "settlement_conflict_requires_resolution";
   const href = taskHref(projectId, task.kind, task.id, {
     origin: task.origin,
     documentId: task.targetChapter?.documentId ?? restore?.documentId ?? null,

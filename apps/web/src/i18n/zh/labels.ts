@@ -311,6 +311,7 @@ export const labels = {
     acceptPlan: "采纳规划",
     switchToManual: "转手动创作",
     acceptManuscript: "采纳正文",
+    keepManuscript: "保留正文并继续",
     requestRevision: "请求修订",
     discardManuscript: "丢弃正文",
     usePartial: "取用残稿",
@@ -350,6 +351,7 @@ export const labels = {
     sessionCancelled: "快速创作已经取消",
     childFatal: "模型调用中断，请修复默认模型后选择恢复方式",
     awaitingUser: "等待作者裁决",
+    unknown: "任务需要你处理",
   },
   nextActionKind: {
     continueTask: "继续未完成的任务",
@@ -503,4 +505,3 @@ export const labels = {
     selectionPolish: "局部润色",
   },
 };
-

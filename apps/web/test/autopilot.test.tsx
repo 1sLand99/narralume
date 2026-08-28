@@ -688,6 +688,109 @@ describe("自动驾驶", () => {
     });
   });
 
+  it("审稿阻断时展示问题，并在确认后保留正文继续", async () => {
+    const awaitingSession = {
+      ...SESSION,
+      status: "awaiting_user",
+      lastError: {
+        code: "child.awaiting_user",
+        reason: "semantic_review_blocked",
+      },
+    };
+    const blockingReview = {
+      id: "review-blocked",
+      projectId: "p-1",
+      runId: "run-abc123",
+      stepId: "run-abc123:semantic.review",
+      documentVersionId: "version-blocked",
+      documentId: "document-blocked",
+      documentTitle: "第三章 潮声",
+      verdict: "block",
+      summary: "正文改变了失踪者身份，需要作者选择方向。",
+      scores: {},
+      reviewedContent: "被审正文",
+      reviewedContentHash: "hash-blocked",
+      issues: [
+        {
+          id: "issue-blocked",
+          category: "canon",
+          severity: "critical",
+          message: "失踪者身份与已确认设定冲突。",
+          requiresAuthorDecision: true,
+          evidence: [{ paragraph: 2, quote: "父亲说失踪的是另一人。" }],
+          suggestedDirection: "改回既有身份，或明确采用新方向。",
+          status: "open",
+          decision: null,
+        },
+      ],
+      createdAt: "2026-08-10T12:00:00.000Z",
+    };
+    const awaitingDetail = {
+      ...SESSION_DETAIL,
+      session: awaitingSession,
+      stopReason: "semantic_review_blocked",
+      availableActions: [
+        "keep_manuscript",
+        "request_revision",
+        "retry-current",
+        "cancel",
+      ],
+      blockingReview,
+    };
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      const setup = setupResponse(url);
+      if (setup) return setup;
+      if (url === "/api/projects/p-1/autopilot/sessions") {
+        return json([awaitingSession]);
+      }
+      if (url === "/api/autopilot/sessions/session-1") {
+        return json(awaitingDetail);
+      }
+      if (url === "/api/autopilot/sessions/session-1/actions") {
+        return json(awaitingDetail);
+      }
+      throw new Error(`unexpected request ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAutopilot();
+
+    expect(
+      await screen.findByRole("region", {
+        name: "审稿发现需要你决定的问题",
+      }),
+    ).toHaveTextContent("失踪者身份与已确认设定冲突。");
+    expect(screen.getByText(/改回既有身份，或明确采用新方向/)).toBeInTheDocument();
+    expect(screen.queryByText("semantic_review_blocked")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "保留当前正文并继续" }),
+    );
+    const dialog = screen.getByRole("alertdialog", {
+      name: "确认保留被阻断的正文",
+    });
+    fireEvent.click(
+      dialog.querySelector<HTMLButtonElement>(".btn--primary")!,
+    );
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([url]) =>
+            String(url) === "/api/autopilot/sessions/session-1/actions",
+        ),
+      ).toBe(true),
+    );
+    const actionCall = fetchMock.mock.calls.find(
+      ([url]) =>
+        String(url) === "/api/autopilot/sessions/session-1/actions",
+    );
+    expect(JSON.parse(String(actionCall?.[1]?.body))).toEqual({
+      action: "keep_manuscript",
+      requestId:
+        "run-abc123:run-abc123:semantic.review:keep_manuscript",
+    });
+  });
+
   it("推舵令 POST /steers，目标 session id 与船身份取至当页，不含 profileId", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);

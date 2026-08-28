@@ -316,6 +316,7 @@ export const labels: typeof labelsZh = {
     acceptPlan: "Adopt plan",
     switchToManual: "Switch to manual",
     acceptManuscript: "Adopt manuscript",
+    keepManuscript: "Keep manuscript and continue",
     requestRevision: "Request revision",
     discardManuscript: "Discard manuscript",
     usePartial: "Take partial draft",
@@ -355,6 +356,7 @@ export const labels: typeof labelsZh = {
     sessionCancelled: "Quick creation was cancelled",
     childFatal: "The model call broke; fix the default model, then choose how to resume",
     awaitingUser: "Awaiting the author's call",
+    unknown: "The task needs your input",
   },
   nextActionKind: {
     continueTask: "Continue the unfinished task",
@@ -508,4 +510,3 @@ export const labels: typeof labelsZh = {
     selectionPolish: "Selection polish",
   },
 };
-

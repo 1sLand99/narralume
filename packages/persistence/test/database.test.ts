@@ -26,6 +26,7 @@ import { migration020 } from "../src/migrations/020-model-runtime-convergence.js
 import { migration021 } from "../src/migrations/021-cross-chapter-settlement.js";
 import { migration022 } from "../src/migrations/022-project-foundation-requests.js";
 import { migration023 } from "../src/migrations/023-chapter-document-identity.js";
+import { migration041 } from "../src/migrations/041-review-author-decisions.js";
 
 const MIGRATIONS_UP_TO_023 = [
   migration001,
@@ -71,8 +72,8 @@ function database(): NodeNarrativeDatabase {
 describe("NodeNarrativeDatabase", () => {
   it("applies the B1 migrations idempotently and enforces checksums", () => {
     const db = database();
-    expect(db.currentMigration()).toBe(40);
-    expect(db.migrate()).toBe(40);
+    expect(db.currentMigration()).toBe(41);
+    expect(db.migrate()).toBe(41);
     expect(
       db.raw
         .prepare("SELECT checksum FROM schema_migrations WHERE version = 23")
@@ -84,6 +85,46 @@ describe("NodeNarrativeDatabase", () => {
     expect(() =>
       db.migrate([{ version: 20, name: "changed", sql: "SELECT 1;" }]),
     ).toThrow(MigrationError);
+  });
+
+  it("backfills author-decision flags for existing blocked review issues", () => {
+    const db = new NodeNarrativeDatabase();
+    databases.push(db);
+    db.raw.exec(`
+      CREATE TABLE review_issues (id TEXT PRIMARY KEY) STRICT;
+      CREATE TABLE review_reports (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        step_id TEXT NOT NULL,
+        verdict TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE run_steps (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        output_artifact_json TEXT
+      ) STRICT;
+      INSERT INTO review_issues(id) VALUES ('decision-issue'), ('ordinary-issue');
+      INSERT INTO review_reports(id, run_id, step_id, verdict)
+      VALUES ('report-1', 'run-1', 'review-1', 'block');
+      INSERT INTO run_steps(id, run_id, output_artifact_json)
+      VALUES (
+        'review-1',
+        'run-1',
+        '{"issues":[{"id":"decision-issue","requiresAuthorDecision":true},{"id":"ordinary-issue","requiresAuthorDecision":false}]}'
+      );
+    `);
+
+    expect(db.migrate([migration041])).toBe(41);
+    expect(
+      db.raw
+        .prepare(
+          "SELECT id, requires_author_decision FROM review_issues ORDER BY id",
+        )
+        .all(),
+    ).toEqual([
+      { id: "decision-issue", requires_author_decision: 1 },
+      { id: "ordinary-issue", requires_author_decision: 0 },
+    ]);
   });
 
   it("installs project write guards while preserving run cleanup updates", () => {
@@ -131,7 +172,7 @@ describe("NodeNarrativeDatabase", () => {
         project.createdAt,
       );
 
-    expect(db.migrate()).toBe(40);
+    expect(db.migrate()).toBe(41);
     expect(
       db.raw
         .prepare(
@@ -149,7 +190,7 @@ describe("NodeNarrativeDatabase", () => {
       .prepare("UPDATE schema_migrations SET checksum = ? WHERE version = 23")
       .run(MUTATED_MIGRATION_023_CHECKSUM);
 
-    expect(db.migrate()).toBe(40);
+    expect(db.migrate()).toBe(41);
     expect(
       db.raw
         .prepare("SELECT checksum FROM schema_migrations WHERE version = 23")

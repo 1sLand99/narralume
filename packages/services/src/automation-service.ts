@@ -12,6 +12,7 @@ import {
   type SqliteAutomationRepository,
   type SqliteCanonRepository,
   type SqliteProjectRepository,
+  type SqliteReviewRepository,
   type SqliteRunRepository,
   type SqliteStoryRepository,
   type NarrativeDatabase,
@@ -28,6 +29,16 @@ export class AutomationServiceError extends ServiceError {
     this.name = "AutomationServiceError";
   }
 }
+
+const REVIEW_BLOCK_REASONS = new Set([
+  "semantic_review_blocked",
+  "quality_gate_blocked",
+]);
+
+const REVIEW_REPAIR_REASONS = new Set([
+  "critical_review_unresolved",
+  "revision_limit_reached",
+]);
 
 const IntentCandidatePayloadSchema = z.object({
   promise: z.string().min(1),
@@ -128,17 +139,12 @@ export function resolveSessionFailure(
   automation: SqliteAutomationRepository,
   runs: SqliteRunRepository,
   story: SqliteStoryRepository,
+  reviews: SqliteReviewRepository,
   sessionId: string,
   action: "retry-current" | "skip-chapter" | "replan" | "stop",
 ): void {
   const session = automation.requireSession(sessionId);
   const now = new Date().toISOString();
-  if (action === "stop") {
-    automation.setSessionStatus(sessionId, "cancelled", now, {
-      code: "session.stopped",
-    });
-    return;
-  }
   const link = session.currentRunId
     ? automation.findRunLink(session.currentRunId)
     : ([...automation.listRunLinks(sessionId)]
@@ -158,6 +164,10 @@ export function resolveSessionFailure(
         409,
       );
     }
+    if (!["failed", "cancelled", "completed"].includes(child.status)) {
+      runs.setRunStatus(child.id, "cancelled", now, "session_resolved");
+    }
+    reviews.supersedeRunRevisionProposals(child.id, now);
     automation.markRunProcessed(sessionId, child.id, action, now);
   }
   if (link?.outlineNodeId) {
@@ -170,6 +180,12 @@ export function resolveSessionFailure(
       now,
     );
   }
+  if (action === "stop") {
+    automation.setSessionStatus(sessionId, "cancelled", now, {
+      code: "session.stopped",
+    });
+    return;
+  }
   if (action === "skip-chapter") {
     automation.recordChapterOutcome(sessionId, "skipped", now);
   }
@@ -177,6 +193,51 @@ export function resolveSessionFailure(
     automation.requestSessionControl(sessionId, "replan", now);
   }
   automation.setSessionStatus(sessionId, "running", now);
+}
+
+/** Requests cancellation for an active child and completes parked sessions
+ * immediately. Returns the run that should be interrupted when work is active. */
+export function requestSessionCancellation(
+  automation: SqliteAutomationRepository,
+  runs: SqliteRunRepository,
+  story: SqliteStoryRepository,
+  reviews: SqliteReviewRepository,
+  sessionId: string,
+  now: string,
+): string | null {
+  const session = automation.requireSession(sessionId);
+  if (["completed", "cancelled"].includes(session.status)) return null;
+  automation.requestSessionControl(sessionId, "cancel", now);
+  if (!session.currentRunId) {
+    automation.setSessionStatus(sessionId, "cancelled", now);
+    return null;
+  }
+  const child = runs.getSnapshot(session.currentRunId).run;
+  reviews.supersedeRunRevisionProposals(child.id, now);
+  if (child.status === "running") {
+    if (!child.cancelRequested) runs.requestCancel(child.id, now);
+    return child.id;
+  }
+  if (!["failed", "cancelled", "completed"].includes(child.status)) {
+    runs.setRunStatus(child.id, "cancelled", now, "session_cancelled");
+  }
+  const outcome = child.status === "completed" ? "completed" : "cancelled";
+  automation.markRunProcessed(sessionId, child.id, outcome, now);
+  const link = automation.findRunLink(child.id);
+  if (link?.role === "chapter" && link.outlineNodeId) {
+    if (child.status === "completed") {
+      automation.recordChapterOutcome(sessionId, "completed", now);
+    } else {
+      story.updateOutlineStatus(
+        session.projectId,
+        link.outlineNodeId,
+        "planned",
+        now,
+      );
+    }
+  }
+  automation.setSessionStatus(sessionId, "cancelled", now);
+  return null;
 }
 
 /**
@@ -318,40 +379,12 @@ export function sessionProductProjection(
   const currentNode = session.currentOutlineNodeId
     ? story.getOutlineNode(session.projectId, session.currentOutlineNodeId)
     : null;
-  const sessionErrorCode =
-    typeof session.lastError?.code === "string" ? session.lastError.code : null;
-  const stopReason =
-    sessionErrorCode === "child.fatal"
-      ? sessionErrorCode
-      : child
-        ? latestRunReason(child)
-        : sessionErrorCode;
-  let availableActions: string[] = [];
-  if (["pending", "planning", "running"].includes(session.status)) {
-    availableActions = ["pause", "cancel"];
-  } else if (session.status === "paused") {
-    availableActions = ["resume", "cancel"];
-  } else if (session.status === "awaiting_user") {
-    availableActions =
-      stopReason === "child.fatal"
-        ? ["retry-current", "skip-chapter", "replan", "stop"]
-        : stopReason === "chapter_commit_approval_required"
-          ? ["accept_manuscript", "request_revision", "cancel"]
-          : [
-                "critical_review_unresolved",
-                "quality_gate_blocked",
-                "semantic_review_blocked",
-                "revision_limit_reached",
-              ].includes(stopReason ?? "")
-            ? ["request_revision", "cancel"]
-            : stopReason === "scene_plan_approval_required"
-              ? ["accept_plan", "cancel"]
-              : stopReason === "settlement_conflict_requires_resolution"
-                ? ["cancel"]
-                : ["cancel"];
-  } else if (session.status === "failed") {
-    availableActions = ["retry-current", "skip-chapter", "replan", "stop"];
-  }
+  const stopReason = sessionStopReason(session, child);
+  const availableActions = sessionAvailableActions(
+    session.status,
+    stopReason,
+    child?.run.status ?? null,
+  );
   return {
     origin: isRecord(session.chapterPolicy.origin)
       ? session.chapterPolicy.origin
@@ -367,6 +400,153 @@ export function sessionProductProjection(
     stopReason,
     availableActions,
   };
+}
+
+/** The parent session owns its parked reason. The child may later be paused or
+ * cancelled, so reading only its newest status event can replace the decision
+ * the author was originally asked to make. */
+export function sessionStopReason(
+  session: AutopilotSession,
+  child: RunSnapshot | null,
+): string | null {
+  const errorCode =
+    typeof session.lastError?.code === "string" ? session.lastError.code : null;
+  const parkedReason =
+    typeof session.lastError?.reason === "string"
+      ? session.lastError.reason
+      : null;
+  if (session.status === "awaiting_user" && parkedReason) return parkedReason;
+  if (errorCode === "child.fatal") return errorCode;
+  return child ? latestRunReason(child) : errorCode;
+}
+
+export function sessionAvailableActions(
+  status: AutopilotSession["status"],
+  stopReason: string | null,
+  childStatus: RunSnapshot["run"]["status"] | null = null,
+): string[] {
+  if (["pending", "planning", "running"].includes(status)) {
+    return ["pause", "cancel"];
+  }
+  if (status === "paused") return ["resume", "cancel"];
+  if (status === "failed") {
+    return ["retry-current", "skip-chapter", "replan", "stop"];
+  }
+  if (status !== "awaiting_user") return [];
+  if (stopReason === "child.fatal") {
+    return ["retry-current", "skip-chapter", "replan", "stop"];
+  }
+  if (stopReason === "chapter_commit_approval_required") {
+    return ["accept_manuscript", "request_revision", "cancel"];
+  }
+  if (stopReason && REVIEW_BLOCK_REASONS.has(stopReason)) {
+    if (["failed", "cancelled"].includes(childStatus ?? "")) {
+      return ["retry-current", "cancel"];
+    }
+    return [
+      "keep_manuscript",
+      ...(childStatus === "paused" ? [] : ["request_revision"]),
+      "retry-current",
+      "cancel",
+    ];
+  }
+  if (stopReason && REVIEW_REPAIR_REASONS.has(stopReason)) {
+    return ["request_revision", "retry-current", "cancel"];
+  }
+  if (stopReason === "scene_plan_approval_required") {
+    return ["accept_plan", "cancel"];
+  }
+  return ["cancel"];
+}
+
+export function currentBlockingReview(
+  session: AutopilotSession,
+  runs: SqliteRunRepository,
+  reviews: SqliteReviewRepository,
+) {
+  if (!session.currentRunId) return null;
+  const snapshot = runs.getSnapshot(session.currentRunId);
+  const reason = sessionStopReason(session, snapshot);
+  if (!reason || !REVIEW_BLOCK_REASONS.has(reason)) return null;
+  return (
+    [...reviews.listReports(snapshot.run.id)]
+      .reverse()
+      .find((report) => report.verdict === "block") ?? null
+  );
+}
+
+export function keepBlockedManuscript(input: {
+  automation: SqliteAutomationRepository;
+  runs: SqliteRunRepository;
+  reviews: SqliteReviewRepository;
+  sessionId: string;
+  now: string;
+}): void {
+  const session = input.automation.requireSession(input.sessionId);
+  if (!session.currentRunId || session.status !== "awaiting_user") {
+    throw new AutomationServiceError(
+      "autopilot.review.not_awaiting_decision",
+      "The writing session is not waiting for an author review decision",
+      409,
+    );
+  }
+  const snapshot = input.runs.getSnapshot(session.currentRunId);
+  if (!["awaiting_user", "paused"].includes(snapshot.run.status)) {
+    throw new AutomationServiceError(
+      "autopilot.review.not_awaiting_decision",
+      "The blocked manuscript is no longer available for an author decision",
+      409,
+    );
+  }
+  const reason = sessionStopReason(session, snapshot);
+  const review = currentBlockingReview(session, input.runs, input.reviews);
+  if (!reason || !REVIEW_BLOCK_REASONS.has(reason) || !review) {
+    throw new AutomationServiceError(
+      "autopilot.review.not_blocked",
+      "The current manuscript is not blocked by an author-decision review",
+      409,
+    );
+  }
+  const blockingIssues = review.issues.filter(
+    (issue) => issue.requiresAuthorDecision,
+  );
+  if (blockingIssues.length === 0) {
+    throw new AutomationServiceError(
+      "autopilot.review.decision_evidence_missing",
+      "The blocking review has no persisted author-decision issues",
+      409,
+    );
+  }
+  for (const issue of blockingIssues) {
+    const existing = input.reviews.getLatestIssueDecision(
+      session.projectId,
+      issue.id,
+    );
+    if (existing) {
+      if (existing.action === "intentional_keep") continue;
+      throw new AutomationServiceError(
+        "autopilot.review.issue_already_decided",
+        "A blocking review issue already has a different author decision",
+        409,
+      );
+    }
+    input.reviews.decideIssue({
+      id: randomUuid(),
+      projectId: session.projectId,
+      issueId: issue.id,
+      action: "intentional_keep",
+      note: null,
+      expectedStatus: "open",
+      now: input.now,
+    });
+  }
+  input.runs.mergePolicy(
+    snapshot.run.id,
+    { reviewOverrideStepId: review.stepId },
+    input.now,
+  );
+  input.runs.resume(snapshot.run.id, input.now);
+  input.automation.resumeSession(session.id, input.now);
 }
 
 /** 最近一次 run 状态事件的原因；没有事件时退回 run 状态本身。 */

@@ -36,6 +36,7 @@ export const ReviewWorkspaceIssueSchema = z.object({
     }),
   ),
   suggestedDirection: z.string().nullable(),
+  requiresAuthorDecision: z.boolean(),
   status: ReviewIssueStatusSchema,
   decision: z
     .object({

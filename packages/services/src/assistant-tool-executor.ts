@@ -30,6 +30,7 @@ import type { RunCoordinator } from "./run-coordinator.js";
 import {
   AutomationServiceError,
   createFoundationRun,
+  requestSessionCancellation,
   requireWritingAssignment,
   resolveSessionFailure,
   withRuntimeModelPolicy,
@@ -731,6 +732,7 @@ export class AssistantToolExecutor {
             this.automation,
             this.runs,
             this.story,
+            this.reviews,
             sourceId,
             action,
           );
@@ -756,11 +758,19 @@ export class AssistantToolExecutor {
     }
     if (action === "cancel") {
       if (!isTerminalSessionStatus(session.status)) {
-        this.automation.requestSessionControl(sourceId, "cancel", now);
-        if (session.currentRunId) {
-          this.reviews.supersedeRunRevisionProposals(session.currentRunId, now);
+        const interruptRunId = this.database.transaction(() =>
+          requestSessionCancellation(
+            this.automation,
+            this.runs,
+            this.story,
+            this.reviews,
+            sourceId,
+            now,
+          ),
+        );
+        if (interruptRunId) {
           this.options.runCoordinator.interrupt(
-            session.currentRunId,
+            interruptRunId,
             "session_cancelled",
           );
         }

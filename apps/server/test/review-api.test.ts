@@ -348,6 +348,7 @@ describe("review workspace API", () => {
           message: "烧信缺少可见动机。",
           evidence: [{ quote: "立刻烧掉了信", start: 9, end: 15 }],
           suggestedDirection: "补充潮声与信件危险之间的因果证据。",
+          requiresAuthorDecision: false,
         },
         {
           id: "issue-2",
@@ -356,6 +357,7 @@ describe("review workspace API", () => {
           message: "这个旧候选仍有一项未裁定问题。",
           evidence: [{ quote: "听见潮声", start: 2, end: 6 }],
           suggestedDirection: "核对上一场景的环境连续性。",
+          requiresAuthorDecision: false,
         },
       ],
       createdAt: "2026-08-10T00:01:00.000Z",
@@ -666,6 +668,7 @@ describe("review workspace API", () => {
           message: "跨章状态没有交代。",
           evidence: [{ quote: "待处理问题", start: 8, end: 13 }],
           suggestedDirection: "补充上一章状态。",
+          requiresAuthorDecision: false,
         },
       ],
       createdAt: "2026-08-10T00:02:20.000Z",

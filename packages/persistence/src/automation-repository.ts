@@ -268,6 +268,7 @@ export class SqliteAutomationRepository {
       .prepare(
         `SELECT * FROM autopilot_sessions
          WHERE status IN ('pending','planning','running')
+            OR (cancel_requested = 1 AND status IN ('paused','awaiting_user'))
          ORDER BY created_at`,
       )
       .all() as unknown as SessionRow[];

@@ -91,6 +91,7 @@ describe("RevisionApplicationService", () => {
           message: "The viewpoint character speaks out of voice",
           evidence: [{ quote: "Before", start: 0, end: 6 }],
           suggestedDirection: "Restore the established restrained voice",
+          requiresAuthorDecision: false,
         },
       ],
       createdAt: now,

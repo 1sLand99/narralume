@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import { ErrorNote } from "../components/error-note";
+import { ConfirmDialog } from "../components/confirm-dialog";
 import { NumberField } from "../components/number-field";
 import { PageBand } from "../components/page-band";
 import { ProjectRequiredState } from "../components/project-required-state";
@@ -49,6 +50,7 @@ import {
   autopilotLinkRoleLabel,
   foundationCandidateKindLabel,
   foundationCandidateStatusLabel,
+  reviewCategoryLabel,
   steerStatusLabel,
   stopReasonLabel,
   taskActionLabel,
@@ -681,7 +683,11 @@ function CommandDeck({
   steerError: unknown;
 }) {
   const { t } = useI18n();
+  const [confirmKeepOpen, setConfirmKeepOpen] = useState(false);
   const running = detail?.session;
+  const blockingReview = detail?.blockingReview ?? null;
+  const blockingIssues =
+    blockingReview?.issues.filter((issue) => issue.requiresAuthorDecision) ?? [];
   const resolutionActions = (
     ["retry-current", "skip-chapter", "replan", "stop"] as const
   ).filter((action) => detail?.availableActions.includes(action));
@@ -746,6 +752,30 @@ function CommandDeck({
         {actionError ? <ErrorNote error={actionError} title={t("autopilot.deck.actionErrorTitle")} /> : null}
       </div>
 
+      {blockingReview ? (
+        <section className="autopilot__blocking-review" aria-label={t("autopilot.blockingReview.title")}>
+          <h3>{t("autopilot.blockingReview.title")}</h3>
+          <p>{t("autopilot.blockingReview.hint")}</p>
+          <p className="autopilot__blocking-summary">{blockingReview.summary}</p>
+          <ul>
+            {blockingIssues.map((issue) => (
+              <li key={issue.id}>
+                <strong>{t("autopilot.blockingReview.issueLabel", {
+                  severity: issue.severity === "critical" ? t("autopilot.blockingReview.severityCritical") : t("autopilot.blockingReview.severityMajor"),
+                  category: reviewCategoryLabel(issue.category),
+                })}</strong>
+                <span>{issue.message}</span>
+                {issue.evidence[0]?.quote ? <small>{t("autopilot.blockingReview.evidence", { quote: issue.evidence[0].quote })}</small> : null}
+                {issue.suggestedDirection ? <small>{t("autopilot.blockingReview.direction", { direction: issue.suggestedDirection })}</small> : null}
+              </li>
+            ))}
+          </ul>
+          {(detail?.availableActions ?? []).includes("keep_manuscript") ? (
+            <button type="button" className="btn" disabled={actionPending} onClick={() => setConfirmKeepOpen(true)}>{t("autopilot.blockingReview.keep")}</button>
+          ) : null}
+        </section>
+      ) : null}
+
       {running && !["completed", "cancelled"].includes(running.status) ? (
       <div className="autopilot__steer" aria-label={t("autopilot.steer.label")}>
         <header className="autopilot__steer-head">
@@ -802,7 +832,7 @@ function CommandDeck({
         </div>
       ) : null}
 
-      {detail?.session.lastError ? (
+      {detail?.session.lastError && detail.session.lastError.code !== "child.awaiting_user" ? (
         <div className="autopilot__notes" data-t="warn">
           <p className="autopilot__notes-title">{t("autopilot.steer.interrupted")}</p>
           <p className="autopilot__notes-error">
@@ -816,6 +846,17 @@ function CommandDeck({
           <p className="autopilot__notes-error">{stopReasonLabel(detail.stopReason)}</p>
         </div>
       ) : null}
+      {confirmKeepOpen && running && blockingReview ? (
+        <ConfirmDialog
+          title={t("autopilot.blockingReview.confirmTitle")}
+          confirmLabel={t("autopilot.blockingReview.keep")}
+          pending={actionPending}
+          onCancel={() => setConfirmKeepOpen(false)}
+          onConfirm={() => onControl({ action: "keep_manuscript", requestId: `${running.currentRunId}:${blockingReview.stepId}:keep_manuscript` })}
+        >
+          <p>{t("autopilot.blockingReview.confirmBody")}</p>
+        </ConfirmDialog>
+      ) : null}
     </div>
   );
 }
@@ -828,6 +869,8 @@ function SessionRevisionRequest({ pending, onSubmit }: { pending: boolean; onSub
   const requestIdRef = useRef<string | null>(null);
   return (
     <div className="autopilot__revision">
+      <strong>{t("autopilot.revision.title")}</strong>
+      <small>{t("autopilot.revision.hint")}</small>
       <textarea
         value={instruction}
         onChange={(event) => setInstruction(event.target.value)}

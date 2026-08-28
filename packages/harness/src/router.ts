@@ -164,6 +164,19 @@ export function routeRun(
       };
     }
     if (verdict === "block") {
+      if (reviewBlockOverridden(run, gate)) {
+        return {
+          type: "skip_steps",
+          stepIds: steps
+            .filter(
+              (step) =>
+                step.status === "pending" &&
+                step.ordinal < settleOrdinal(steps),
+            )
+            .map((step) => step.id),
+          reason: "review_block_overridden",
+        };
+      }
       return {
         type: "await_user",
         reason: "semantic_review_blocked",
@@ -184,7 +197,7 @@ export function routeRun(
        的正文版本，本身不存在“未过审”状态。 */
     const gate = latestSucceededGate(steps);
     const verdict = gateVerdict(gate);
-    if (verdict !== "pass") {
+    if (verdict !== "pass" && !reviewBlockOverridden(run, gate)) {
       const canCommitForReview =
         verdict === "revise" &&
         !gateHasCriticalIssue(gate) &&
@@ -310,6 +323,17 @@ function hasScheduledRetry(
       event.type === RETRY_SCHEDULED_EVENT &&
       event.payload["stepId"] === step.id &&
       event.payload["attempt"] === step.attempt,
+  );
+}
+
+function reviewBlockOverridden(
+  run: RunSnapshot["run"],
+  gate: NarrativeRunStep | undefined,
+): boolean {
+  return (
+    gate?.kind === "semantic.review" &&
+    gate.outputArtifact?.verdict === "block" &&
+    run.policy.reviewOverrideStepId === gate.id
   );
 }
 

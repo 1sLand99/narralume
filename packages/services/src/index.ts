@@ -37,10 +37,15 @@ export {
   adoptCandidate,
   AutomationServiceError,
   createFoundationRun,
+  currentBlockingReview,
+  keepBlockedManuscript,
   latestRunReason,
+  requestSessionCancellation,
   resolveSessionEffectivePolicy,
   resolveSessionFailure,
+  sessionAvailableActions,
   sessionProductProjection,
+  sessionStopReason,
 } from "./automation-service.js";
 export { startManualSettlementRun } from "./manual-settlement.js";
 export {

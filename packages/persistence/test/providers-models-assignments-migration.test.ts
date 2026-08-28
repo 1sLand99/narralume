@@ -161,7 +161,7 @@ describe("migration 016 (providers-models-assignments)", () => {
     const db = new NodeNarrativeDatabase(databasePath);
     try {
       expect(db.migrate(MIGRATIONS_UP_TO_019)).toBe(19);
-      expect(db.migrate()).toBe(40);
+      expect(db.migrate()).toBe(41);
       const backupName = readdirSync(directory).find(
         (name) =>
           name.startsWith("novel.sqlite.pre-b1-") && name.endsWith(".sqlite"),
@@ -223,7 +223,7 @@ describe("migration 016 (providers-models-assignments)", () => {
     insertRoutingRule(db, "revision", "p-chat");
 
     db.migrate();
-    expect(db.currentMigration()).toBe(40);
+    expect(db.currentMigration()).toBe(41);
 
     const providers = db.raw
       .prepare("SELECT * FROM providers ORDER BY id")
@@ -280,7 +280,7 @@ describe("migration 016 (providers-models-assignments)", () => {
     expect(legacyTables).toEqual([]);
 
     // Idempotent: migrating again is a no-op.
-    expect(db.migrate()).toBe(40);
+    expect(db.migrate()).toBe(41);
     expect(
       db.raw.prepare("SELECT COUNT(*) AS count FROM providers").get(),
     ).toEqual({ count: 4 });
@@ -349,7 +349,7 @@ describe("migration 016 (providers-models-assignments)", () => {
   it("inserts no assignments when there are no models at all", () => {
     const db = databaseAt015();
     db.migrate();
-    expect(db.currentMigration()).toBe(40);
+    expect(db.currentMigration()).toBe(41);
     expect(
       db.raw.prepare("SELECT COUNT(*) AS count FROM model_assignments").get(),
     ).toEqual({ count: 0 });

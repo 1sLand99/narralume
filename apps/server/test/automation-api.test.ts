@@ -1207,6 +1207,206 @@ describe("automation API", () => {
     ]);
   });
 
+  it("lets the author intentionally keep a semantically blocked manuscript", async () => {
+    const { app, database } = await setup(
+      automationModel({
+        semanticReview: {
+          summary: "正文改变了已确认的失踪者身份，需要作者决定是否保留。",
+          scores: {
+            continuity: 35,
+            pacing: 88,
+            character: 86,
+            prose: 85,
+            goal: 94,
+          },
+          issues: [
+            {
+              category: "canon",
+              severity: "critical",
+              message: "失踪者身份与既有设定冲突。",
+              evidenceParagraphs: [2],
+              suggestedDirection: "改回既有身份，或由作者确认采用新方向。",
+              requiresAuthorDecision: true,
+            },
+          ],
+        },
+      }),
+    );
+    const { projectId, sessionId, chapterId, runId } =
+      await createSingleChapterSession(app, "保留阻断正文");
+
+    expect(await finishRun(app, projectId, runId)).toBe("awaiting_user");
+    await advanceSession(app, sessionId);
+    new SqliteRunRepository(database).setRunStatus(
+      runId,
+      "paused",
+      new Date().toISOString(),
+      "requested",
+    );
+    let detail = await getSession(app, sessionId);
+    expect(detail).toMatchObject({
+      session: { status: "awaiting_user" },
+      stopReason: "semantic_review_blocked",
+      availableActions: ["keep_manuscript", "retry-current", "cancel"],
+      blockingReview: {
+        verdict: "block",
+        issues: [
+          {
+            category: "canon",
+            severity: "critical",
+            requiresAuthorDecision: true,
+          },
+        ],
+      },
+    });
+
+    const kept = await app.inject({
+      method: "POST",
+      url: `/api/autopilot/sessions/${sessionId}/actions`,
+      payload: { action: "keep_manuscript", requestId: "keep-blocked-1" },
+    });
+    expect(kept.statusCode, kept.body).toBe(200);
+    expect(kept.json()).toMatchObject({
+      session: { status: "running", currentRunId: runId },
+      blockingReview: null,
+    });
+    expect(
+      (
+        kept.json() as {
+          runs: { id: string; policy: Record<string, unknown> }[];
+        }
+      ).runs.find((run) => run.id === runId)?.policy.reviewOverrideStepId,
+    ).toEqual(expect.any(String));
+
+    expect(await finishRun(app, projectId, runId)).toBe("completed");
+    await advanceSession(app, sessionId);
+    await advanceSession(app, sessionId);
+    detail = await getSession(app, sessionId);
+    expect(detail.session).toMatchObject({
+      status: "completed",
+      completedChapters: 1,
+    });
+    const reviewWorkspace = (
+      await app.inject({
+        method: "GET",
+        url: `/api/projects/${projectId}/reviews`,
+      })
+    ).json() as {
+      reports: Array<{
+        issues: Array<{
+          requiresAuthorDecision: boolean;
+          status: string;
+          decision: { action: string } | null;
+        }>;
+      }>;
+    };
+    expect(reviewWorkspace.reports[0]?.issues[0]).toMatchObject({
+      requiresAuthorDecision: true,
+      status: "resolved",
+      decision: { action: "intentional_keep" },
+    });
+    expect(
+      (
+        await app.inject({
+          method: "GET",
+          url: `/api/projects/${projectId}/story-bible`,
+        })
+      ).json(),
+    ).toMatchObject({
+      outline: expect.arrayContaining([
+        expect.objectContaining({ id: chapterId, status: "committed" }),
+      ]),
+    });
+  });
+
+  it("cancels a parked review session and releases its chapter for another session", async () => {
+    const { app, database } = await setup(
+      automationModel({
+        semanticReview: {
+          summary: "正文方向需要作者决定。",
+          scores: {
+            continuity: 40,
+            pacing: 88,
+            character: 86,
+            prose: 85,
+            goal: 94,
+          },
+          issues: [
+            {
+              category: "canon",
+              severity: "major",
+              message: "正文选择了与既有设定不同的方向。",
+              evidenceParagraphs: [2],
+              suggestedDirection: null,
+              requiresAuthorDecision: true,
+            },
+          ],
+        },
+      }),
+    );
+    const { projectId, sessionId, chapterId, runId } =
+      await createSingleChapterSession(app, "取消阻断正文");
+    expect(await finishRun(app, projectId, runId)).toBe("awaiting_user");
+    await advanceSession(app, sessionId);
+
+    new SqliteRunRepository(database).setRunStatus(
+      runId,
+      "paused",
+      new Date().toISOString(),
+      "requested",
+    );
+    const parked = await getSession(app, sessionId);
+    expect(parked.runs.find((run) => run.id === runId)).toMatchObject({
+      status: "paused",
+    });
+    expect(parked).toMatchObject({
+      session: { status: "awaiting_user" },
+      stopReason: "semantic_review_blocked",
+    });
+    expect(parked.availableActions).toEqual([
+      "keep_manuscript",
+      "retry-current",
+      "cancel",
+    ]);
+
+    const cancelled = await app.inject({
+      method: "POST",
+      url: `/api/autopilot/sessions/${sessionId}/actions`,
+      payload: { action: "cancel" },
+    });
+    expect(cancelled.statusCode, cancelled.body).toBe(200);
+    expect(cancelled.json()).toMatchObject({
+      session: { status: "cancelled", currentRunId: null },
+      availableActions: [],
+    });
+    expect(
+      (
+        await app.inject({
+          method: "GET",
+          url: `/api/projects/${projectId}/story-bible`,
+        })
+      ).json(),
+    ).toMatchObject({
+      outline: expect.arrayContaining([
+        expect.objectContaining({ id: chapterId, status: "planned" }),
+      ]),
+    });
+
+    const restarted = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/autopilot/sessions`,
+      payload: {
+        requestId: "restart-after-block",
+        approvalMode: "continuous",
+        targetChapters: 1,
+        windowSize: 1,
+        maxRevisionCycles: 1,
+        chapterPolicy: { minChapterCharacters: 100 },
+      },
+    });
+    expect(restarted.statusCode, restarted.body).toBe(202);
+  });
+
   it("parks the session in awaiting_user when a child run fails fatally", async () => {
     const { app } = await setup(fatalModel());
     const projectResponse = await app.inject({
@@ -1442,6 +1642,63 @@ async function setup(model: NarrativeModelClient = automationModel()) {
   return { app, database };
 }
 
+async function createSingleChapterSession(
+  app: Awaited<ReturnType<typeof buildApp>>,
+  title: string,
+) {
+  const project = (
+    await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      payload: {
+        requestId: globalThis.crypto.randomUUID(),
+        title,
+        premise: "作者需要裁决一处会改变故事方向的正文。",
+      },
+    })
+  ).json() as { id: string };
+  const bible = (
+    await app.inject({
+      method: "GET",
+      url: `/api/projects/${project.id}/story-bible`,
+    })
+  ).json() as { outline: Array<{ id: string; kind: string }> };
+  const rootId = bible.outline.find((node) => node.kind === "book")!.id;
+  const chapter = await app.inject({
+    method: "POST",
+    url: `/api/projects/${project.id}/outline`,
+    payload: {
+      parentId: rootId,
+      kind: "chapter",
+      ordinal: 0,
+      title: "第一章",
+      summary: "灯塔熄灭，记忆出现缺口。",
+      goal: "发现遗忘规则",
+      conflict: "父亲否认失踪者存在",
+      metadata: {},
+    },
+  });
+  expect(chapter.statusCode, chapter.body).toBe(201);
+  const chapterId = (chapter.json() as { id: string }).id;
+  const created = await app.inject({
+    method: "POST",
+    url: `/api/projects/${project.id}/autopilot/sessions`,
+    payload: {
+      requestId: `blocked-session:${title}`,
+      approvalMode: "continuous",
+      targetChapters: 1,
+      windowSize: 1,
+      maxRevisionCycles: 1,
+      chapterPolicy: { minChapterCharacters: 100 },
+    },
+  });
+  expect(created.statusCode, created.body).toBe(202);
+  const sessionId = (created.json() as { id: string }).id;
+  await advanceSession(app, sessionId);
+  const runId = (await getSession(app, sessionId)).session.currentRunId!;
+  return { projectId: project.id, sessionId, chapterId, runId };
+}
+
 async function finishRun(
   app: Awaited<ReturnType<typeof buildApp>>,
   projectId: string,
@@ -1510,6 +1767,16 @@ async function getSession(
       rationale: string | null;
     }[];
     reviews: { scopeType: string }[];
+    blockingReview: {
+      stepId: string;
+      verdict: string;
+      issues: Array<{
+        category: string;
+        severity: string;
+        requiresAuthorDecision: boolean;
+      }>;
+    } | null;
+    stopReason: string | null;
     availableActions: string[];
   };
 }
@@ -1540,6 +1807,7 @@ function automationModel(
       purpose: string,
       request: unknown,
     ) => Promise<void> | void;
+    semanticReview?: unknown;
   } = {},
 ): NarrativeModelClient {
   const usage = {
@@ -1563,7 +1831,10 @@ function automationModel(
     },
     async structured(_run, _step, purpose, request, _contract, validate) {
       await options.beforeStructured?.(purpose, request);
-      const value = scriptedValue(purpose, request);
+      const value =
+        purpose === "semantic-review" && options.semanticReview
+          ? options.semanticReview
+          : scriptedValue(purpose, request);
       const checked = validate(value);
       if (!checked.success) throw new Error(checked.issues.join("; "));
       return { value: checked.data, usage, mode: "native", attempts: 1 };

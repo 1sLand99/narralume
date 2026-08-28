@@ -906,6 +906,7 @@ export interface ReviewWorkspaceIssue {
   message: string;
   evidence: { quote: string; start?: number; end?: number }[];
   suggestedDirection: string | null;
+  requiresAuthorDecision: boolean;
   status: ReviewIssueStatus;
   decision: {
     action: ReviewIssueDecisionAction;
@@ -1040,7 +1041,7 @@ export type SessionActionRequest =
       action: "pause" | "resume" | "cancel";
     }
   | {
-      action: "accept_plan" | "accept_manuscript";
+      action: "accept_plan" | "accept_manuscript" | "keep_manuscript";
       requestId: string;
     }
   | { action: "request_revision"; requestId: string; instruction?: string };

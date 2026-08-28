@@ -579,6 +579,7 @@ export function taskActionLabel(action: string): string {
     accept_plan: "labels.taskAction.acceptPlan",
     switch_to_manual: "labels.taskAction.switchToManual",
     accept_manuscript: "labels.taskAction.acceptManuscript",
+    keep_manuscript: "labels.taskAction.keepManuscript",
     request_revision: "labels.taskAction.requestRevision",
     discard_manuscript: "labels.taskAction.discardManuscript",
     use_partial: "labels.taskAction.usePartial",
@@ -641,7 +642,9 @@ export function stopReasonLabel(reason: string): string {
     "long_goal.paused_baseline": "labels.stopReason.longGoalBaselineChanged",
   };
   const key: MessageKey | undefined = keys[reason];
-  return key ? translate(getLocale(), key) : reason;
+  return key
+    ? translate(getLocale(), key)
+    : translate(getLocale(), "labels.stopReason.unknown");
 }
 
 /** 项目概览 suggested 下一步（ProjectOverview.nextAction.kind）。 */

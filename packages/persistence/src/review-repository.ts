@@ -16,6 +16,7 @@ export interface ReviewIssueInput {
     paragraphOrdinal?: number;
   }[];
   suggestedDirection: string | null;
+  requiresAuthorDecision: boolean;
 }
 
 export interface ReviewReportInput {
@@ -61,8 +62,8 @@ export class SqliteReviewRepository {
       const insertIssue = this.database.raw.prepare(
         `INSERT OR IGNORE INTO review_issues(
           id, report_id, category, severity, message, evidence_json,
-          suggested_direction, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)`,
+          suggested_direction, requires_author_decision, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)`,
       );
       for (const issue of report.issues) {
         insertIssue.run(
@@ -73,6 +74,7 @@ export class SqliteReviewRepository {
           issue.message,
           JSON.stringify(issue.evidence),
           issue.suggestedDirection,
+          issue.requiresAuthorDecision ? 1 : 0,
           report.createdAt,
         );
       }
@@ -340,6 +342,7 @@ export class SqliteReviewRepository {
             issue.evidence_json,
           ) as ReviewIssueInput["evidence"],
           suggestedDirection: issue.suggested_direction,
+          requiresAuthorDecision: issue.requires_author_decision === 1,
           status: issue.status,
         }),
       ),
@@ -813,6 +816,7 @@ interface ReviewIssueRow {
   message: string;
   evidence_json: string;
   suggested_direction: string | null;
+  requires_author_decision: number;
   status: string;
 }
 
@@ -935,6 +939,7 @@ function mapProjectIssue(row: ProjectReviewIssueRow): ProjectReviewIssueView {
     message: row.message,
     evidence: JSON.parse(row.evidence_json) as ReviewIssueInput["evidence"],
     suggestedDirection: row.suggested_direction,
+    requiresAuthorDecision: row.requires_author_decision === 1,
     status: row.status as ReviewIssueStatus,
     decision:
       row.action && row.decided_at

@@ -185,6 +185,39 @@ describe("routeRun", () => {
     });
   });
 
+  it("skips remaining revision gates after the author keeps a blocked review", () => {
+    const snapshot = makeSnapshot(1);
+    snapshot.run.mode = "autopilot";
+    succeedThrough(snapshot, "run-1:review:0");
+    setOutput(snapshot, "run-1:check:0", { verdict: "pass" });
+    setOutput(snapshot, "run-1:review:0", { verdict: "block" });
+    snapshot.run.policy = { reviewOverrideStepId: "run-1:review:0" };
+
+    expect(routeRun(snapshot)).toEqual({
+      type: "skip_steps",
+      stepIds: ["run-1:revise:0", "run-1:check:1", "run-1:review:1"],
+      reason: "review_block_overridden",
+    });
+  });
+
+  it("settles a final blocked review only when its exact step was overridden", () => {
+    const snapshot = makeSnapshot(0);
+    snapshot.run.mode = "autopilot";
+    succeedThrough(snapshot, "run-1:review:0");
+    setOutput(snapshot, "run-1:check:0", { verdict: "pass" });
+    setOutput(snapshot, "run-1:review:0", { verdict: "block" });
+
+    expect(routeRun(snapshot)).toMatchObject({
+      type: "await_user",
+      reason: "quality_gate_blocked",
+    });
+    snapshot.run.policy = { reviewOverrideStepId: "run-1:review:0" };
+    expect(routeRun(snapshot)).toEqual({
+      type: "start_step",
+      stepId: "run-1:settle",
+    });
+  });
+
   it("requires explicit chapter-gate approval before the atomic commit", () => {
     const snapshot = makeSnapshot(0);
     for (const step of snapshot.steps) {

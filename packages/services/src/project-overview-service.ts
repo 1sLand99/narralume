@@ -15,6 +15,10 @@ import {
 } from "@narralume/persistence";
 
 import { runProductProjection } from "./run-policy.js";
+import {
+  sessionAvailableActions,
+  sessionStopReason,
+} from "./automation-service.js";
 import { isPrimaryRunRecipe } from "./task-classification.js";
 
 const TERMINAL_SESSION_STATUSES = new Set(["completed", "cancelled"]);
@@ -214,6 +218,7 @@ export class ProjectOverviewService {
     const child = session.currentRunId
       ? this.runs.getSnapshot(session.currentRunId)
       : null;
+    const stopReason = sessionStopReason(session, child);
     return {
       kind: "quick_creation",
       id: session.id,
@@ -224,39 +229,14 @@ export class ProjectOverviewService {
       origin: isRecord(session.chapterPolicy.origin)
         ? session.chapterPolicy.origin
         : null,
-      stopReason: child
-        ? latestRunReason(child)
-        : typeof session.lastError?.code === "string"
-          ? session.lastError.code
-          : null,
-      availableActions: sessionActions(session, child),
+      stopReason,
+      availableActions: sessionAvailableActions(
+        session.status,
+        stopReason,
+        child?.run.status ?? null,
+      ),
     };
   }
-}
-
-function sessionActions(
-  session: AutopilotSession,
-  child: RunSnapshot | null,
-): string[] {
-  if (["pending", "planning", "running"].includes(session.status)) {
-    return ["pause", "cancel"];
-  }
-  if (session.status === "paused") return ["resume", "cancel"];
-  if (session.status === "failed") {
-    return ["retry-current", "skip-chapter", "replan", "stop"];
-  }
-  if (session.status !== "awaiting_user") return [];
-  const reason = child ? latestRunReason(child) : null;
-  if (reason === "chapter_commit_approval_required") {
-    return ["accept_manuscript", "request_revision", "cancel"];
-  }
-  if (reason === "scene_plan_approval_required") {
-    return ["accept_plan", "cancel"];
-  }
-  if (reason === "settlement_conflict_requires_resolution") {
-    return ["cancel"];
-  }
-  return ["cancel"];
 }
 
 function latestRunReason(snapshot: RunSnapshot): string | null {

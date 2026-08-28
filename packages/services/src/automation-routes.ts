@@ -42,15 +42,19 @@ import {
   adoptCandidate,
   AutomationServiceError,
   createFoundationRun,
+  currentBlockingReview,
   deterministicRequestId,
   hashRequest,
   isRecord,
   isTerminalSessionStatus,
+  keepBlockedManuscript,
   latestRunReason,
   requestManuscriptRevision,
+  requestSessionCancellation,
   requireWritingAssignment,
   resolveSessionEffectivePolicy,
   resolveSessionFailure,
+  sessionProductProjection,
   runProductProjection,
   withRuntimeModelPolicy,
 } from "@narralume/services";
@@ -444,7 +448,7 @@ export function registerAutomationRoutes(
 
   app.route("GET", "/api/autopilot/sessions/:sessionId", async (request) => {
     const { sessionId } = SessionParamsSchema.parse(request.params);
-    return sessionDetail(automation, runs, story, sessionId);
+    return sessionDetail(automation, runs, story, reviews, sessionId);
   });
 
   app.route(
@@ -455,7 +459,8 @@ export function registerAutomationRoutes(
       const input = SessionActionRequestSchema.parse(request.body);
       if (
         input.action === "accept_plan" ||
-        input.action === "accept_manuscript"
+        input.action === "accept_manuscript" ||
+        input.action === "keep_manuscript"
       ) {
         const scope = `autopilot-session:${sessionId}:action`;
         const requestHash = hashRequest(input);
@@ -469,7 +474,7 @@ export function registerAutomationRoutes(
                 409,
               );
             }
-            return sessionDetail(automation, runs, story, sessionId);
+            return sessionDetail(automation, runs, story, reviews, sessionId);
           }
 
           const session = automation.requireSession(sessionId);
@@ -522,9 +527,23 @@ export function registerAutomationRoutes(
             );
             runs.resume(child.id, now);
             automation.resumeSession(sessionId, now);
+          } else {
+            keepBlockedManuscript({
+              automation,
+              runs,
+              reviews,
+              sessionId,
+              now,
+            });
           }
 
-          const result = sessionDetail(automation, runs, story, sessionId);
+          const result = sessionDetail(
+            automation,
+            runs,
+            story,
+            reviews,
+            sessionId,
+          );
           requestReplays.insert({
             scope,
             requestId: input.requestId,
@@ -543,14 +562,21 @@ export function registerAutomationRoutes(
 
       const session = automation.requireSession(sessionId);
       const now = new Date().toISOString();
-      if (input.action === "pause" || input.action === "cancel") {
+      if (input.action === "pause") {
         automation.requestSessionControl(sessionId, input.action, now);
-        if (input.action === "cancel" && session.currentRunId) {
-          reviews.supersedeRunRevisionProposals(session.currentRunId, now);
-          options.runCoordinator.interrupt(
-            session.currentRunId,
-            "session_cancelled",
-          );
+      } else if (input.action === "cancel") {
+        const interruptRunId = database.transaction(() =>
+          requestSessionCancellation(
+            automation,
+            runs,
+            story,
+            reviews,
+            sessionId,
+            now,
+          ),
+        );
+        if (interruptRunId) {
+          options.runCoordinator.interrupt(interruptRunId, "session_cancelled");
         }
       } else if (input.action === "resume") {
         if (session.currentRunId) {
@@ -588,7 +614,7 @@ export function registerAutomationRoutes(
         options.runCoordinator.wake();
         options.coordinator.wake();
       }
-      return sessionDetail(automation, runs, story, sessionId);
+      return sessionDetail(automation, runs, story, reviews, sessionId);
     },
   );
 
@@ -605,9 +631,16 @@ export function registerAutomationRoutes(
       ) {
         requireWritingAssignment(database, options.environment);
       }
-      resolveSessionFailure(automation, runs, story, sessionId, input.action);
+      resolveSessionFailure(
+        automation,
+        runs,
+        story,
+        reviews,
+        sessionId,
+        input.action,
+      );
       if (options.enableBackgroundWorker) options.coordinator.wake();
-      return sessionDetail(automation, runs, story, sessionId);
+      return sessionDetail(automation, runs, story, reviews, sessionId);
     },
   );
 
@@ -754,7 +787,7 @@ export function registerAutomationRoutes(
       if (options.enableBackgroundWorker) options.coordinator.wake();
       return {
         steer: StorySteerSchema.parse(decision.steer),
-        detail: sessionDetail(automation, runs, story, sessionId),
+        detail: sessionDetail(automation, runs, story, reviews, sessionId),
       };
     },
   );
@@ -767,7 +800,7 @@ export function registerAutomationRoutes(
       const processed = await options.coordinator.advanceSession(sessionId);
       return {
         processed,
-        detail: sessionDetail(automation, runs, story, sessionId),
+        detail: sessionDetail(automation, runs, story, reviews, sessionId),
       };
     },
   );
@@ -777,6 +810,7 @@ function sessionDetail(
   automation: SqliteAutomationRepository,
   runs: SqliteRunRepository,
   story: SqliteStoryRepository,
+  reviews: SqliteReviewRepository,
   sessionId: string,
 ) {
   automation.reconcileSteerClassifications(sessionId, new Date().toISOString());
@@ -793,6 +827,7 @@ function sessionDetail(
       .listSteers(sessionId)
       .map((steer) => StorySteerSchema.parse(steer)),
     reviews: automation.listPlanningReviews(sessionId),
+    blockingReview: currentBlockingReview(session, runs, reviews),
     ...sessionProductProjection(session, runs, story),
   });
 }
@@ -806,68 +841,6 @@ function toSessionResponse(session: AutopilotSession) {
       : null,
     chapterPolicy: resolveSessionEffectivePolicy(session),
   });
-}
-
-function sessionProductProjection(
-  session: AutopilotSession,
-  runs: SqliteRunRepository,
-  story: SqliteStoryRepository,
-) {
-  const child = session.currentRunId
-    ? runs.getSnapshot(session.currentRunId)
-    : null;
-  const currentNode = session.currentOutlineNodeId
-    ? story.getOutlineNode(session.projectId, session.currentOutlineNodeId)
-    : null;
-  const sessionErrorCode =
-    typeof session.lastError?.code === "string" ? session.lastError.code : null;
-  const stopReason =
-    sessionErrorCode === "child.fatal"
-      ? sessionErrorCode
-      : child
-        ? latestRunReason(child)
-        : sessionErrorCode;
-  let availableActions: string[] = [];
-  if (["pending", "planning", "running"].includes(session.status)) {
-    availableActions = ["pause", "cancel"];
-  } else if (session.status === "paused") {
-    availableActions = ["resume", "cancel"];
-  } else if (session.status === "awaiting_user") {
-    availableActions =
-      stopReason === "child.fatal"
-        ? ["retry-current", "skip-chapter", "replan", "stop"]
-        : stopReason === "chapter_commit_approval_required"
-          ? ["accept_manuscript", "request_revision", "cancel"]
-          : [
-                "critical_review_unresolved",
-                "quality_gate_blocked",
-                "semantic_review_blocked",
-                "revision_limit_reached",
-              ].includes(stopReason ?? "")
-            ? ["request_revision", "cancel"]
-            : stopReason === "scene_plan_approval_required"
-              ? ["accept_plan", "cancel"]
-              : stopReason === "settlement_conflict_requires_resolution"
-                ? ["cancel"]
-                : ["cancel"];
-  } else if (session.status === "failed") {
-    availableActions = ["retry-current", "skip-chapter", "replan", "stop"];
-  }
-  return {
-    origin: isRecord(session.chapterPolicy.origin)
-      ? session.chapterPolicy.origin
-      : null,
-    approvalMode: session.mode === "autopilot" ? "continuous" : "per_chapter",
-    currentChapter: currentNode
-      ? {
-          id: currentNode.id,
-          title: currentNode.title,
-          runId: session.currentRunId,
-        }
-      : null,
-    stopReason,
-    availableActions,
-  };
 }
 
 /** 读取候选生成时保存的基线值；缺失时返回 null（等价于“生成时尚不存在”）。 */

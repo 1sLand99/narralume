@@ -413,6 +413,7 @@ export const ReviewReportViewSchema = z.object({
         }),
       ),
       suggestedDirection: z.string().nullable(),
+      requiresAuthorDecision: z.boolean(),
       status: z.string(),
     }),
   ),

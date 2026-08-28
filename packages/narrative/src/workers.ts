@@ -1009,6 +1009,7 @@ export class ChapterWorkerSuite {
         message: issue.message,
         evidence: issue.evidence,
         suggestedDirection: issue.suggestedDirection,
+        requiresAuthorDecision: issue.requiresAuthorDecision,
       })),
       createdAt: this.now().toISOString(),
     });

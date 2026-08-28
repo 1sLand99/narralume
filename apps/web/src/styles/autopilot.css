@@ -332,8 +332,52 @@
   outline: none;
   border-color: var(--vera-hairline);
 }
+.autopilot__revision > small {
+  color: var(--ink-faint);
+  line-height: 1.6;
+}
 .autopilot__revision .autopilot__action-btn {
   align-self: flex-start;
+}
+
+.autopilot__blocking-review {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.9rem;
+  border: 1px solid var(--vera-hairline);
+  border-radius: var(--radius-card);
+  background: var(--vera-soft);
+}
+.autopilot__blocking-review h3 {
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+}
+.autopilot__blocking-review > p,
+.autopilot__blocking-review li span,
+.autopilot__blocking-review li small {
+  line-height: 1.65;
+}
+.autopilot__blocking-review > p,
+.autopilot__blocking-review li small {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+}
+.autopilot__blocking-review ul {
+  display: grid;
+  gap: 0.55rem;
+}
+.autopilot__blocking-review li {
+  display: grid;
+  gap: 0.25rem;
+  padding-left: 0.65rem;
+  border-left: 2px solid var(--vera);
+}
+.autopilot__blocking-review li strong {
+  color: var(--vera-deep);
+  font-size: 0.68rem;
+}
+.autopilot__blocking-summary {
+  color: var(--ink) !important;
 }
 .autopilot__steer-input:focus {
   outline: none;
