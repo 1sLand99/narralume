@@ -82,4 +82,6 @@ Do not settle for "the file exists". Regularly restore a full backup into a new 
 
 Project maintainers should also check whether the restore left behind `.partial`, `.partial-shm`, or `.partial-wal` files, and keep one reviewable restore record for every release candidate.
 
+Maintainers can first run `npm run test:release:recovery` to regress backup restore, orphaned-run interruption, and partial recovery contracts. For a release candidate, run `npm run verify:release`, which executes code verification, high-risk E2E, recovery regressions, and the real-model matrix in that order. These automated checks only verify encoded contracts; they do not replace the independent-directory restore drill and manual inspection above.
+
 If a backup contains real model credentials, do not upload the keys, the full database, or model responses — along with their hashes — to public Issues, CI artifacts, or screenshots. For security incident handling, see [SECURITY.md](../SECURITY.md).

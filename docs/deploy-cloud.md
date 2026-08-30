@@ -79,11 +79,12 @@ Wrangler 和 cloudflared 在仓库外管理。任何文档、日志、截图和�
 5. Relay 校验唯一 Web Origin、请求体上限、上游超时和错误响应，不记录提示词、正文或响应正文。
 6. 对需要 Turnstile 的来源，Relay 必须调用 Siteverify，并校验 hostname 与 action；只渲染 Widget 不算保护完成。
 7. 中国大陆来源由 Relay 依据 `request.cf.country` 直接签发会话；其他来源通过
-   Turnstile 后签发 24 小时、IP 绑定的 `__Host-`、`HttpOnly`、`Secure`、
+   Turnstile 后签发截至下一个 UTC 日边界、IP 绑定的 `__Host-`、`HttpOnly`、`Secure`、
    `SameSite=Strict` Cookie。
    `SESSION_SIGNING_KEY` 必须是 64 个小写十六进制字符；可用 `openssl rand -hex 32` 生成，且必须与 Bridge 共享密钥分开保存。
-8. 模型请求按签名会话限制为每分钟 30 次，并由 Durable Object 原子限制每会话 60 次有效调用。
-9. Cloudflare 侧配置成本告警、最小化日志和可立即关闭 Relay/Tunnel 的操作路径。
+8. Relay 只重建白名单内的 Chat Completions 字段：请求体最多 512 KiB、最多 128 条消息和 16 个工具，单次输出最多 32,000 token；多候选、替代输出上限和未知字段均被拒绝。Bridge 在真实上游密钥前再次执行同一层顶级字段与输出上限防御。
+9. 模型请求按签名会话限制为每分钟 30 次；同一来源在同一 UTC 日重复验证不会重置身份，Durable Object 原子限制每个风险主体 60 次、全站默认 1,000 次有效调用。实际全站上限由 Relay 非秘密变量 `GLOBAL_DAILY_REQUEST_LIMIT` 明确配置。
+10. `RELAY_ENABLED="0"` 是不依赖 Bridge/Tunnel 的应用级紧急熔断；Cloudflare 侧仍应配置成本告警并最小化日志。
 
 ## 首次准备
 
@@ -105,6 +106,8 @@ Relay Worker 需要以下远程 secrets：
 - `BRIDGE_SHARED_SECRET`
 - `TURNSTILE_SECRET_KEY`
 - `SESSION_SIGNING_KEY`
+
+实际 Relay 配置还必须显式设置两个非秘密变量：`GLOBAL_DAILY_REQUEST_LIMIT` 是 UTC 日全站调用上限（`1`–`100000`），`RELAY_ENABLED` 正常为 `"1"`，紧急止损时改为 `"0"` 并只部署 Relay。公开模板默认分别为 `"1000"` 与 `"1"`。
 
 逐项写入实际 Relay 配置，命令会交互读取值，不要把值放进命令历史：
 
@@ -194,7 +197,7 @@ Start-ScheduledTask -TaskName "NarraLume Bridge"
 5. 中国大陆来源无需加载 Turnstile 即可获得安全 Cookie；其他来源在 Turnstile 成功后获得 Cookie，
    错误 token、hostname 或 action 均被拒绝。
 6. 执行一次受控流式生成，确认 Relay、Access、Bridge 和上游完整链路。
-7. 验证速率限制、60 次会话额度、请求体上限、超时和非白名单模型拒绝。
+7. 验证速率限制、60 次风险主体日额度、全站日额度、512 KiB 请求体上限、32k 输出上限、未知字段拒绝、超时和非白名单模型拒绝。
 8. 验证浏览器刷新后的 OPFS 持久化、SQLite 下载/导入导出，以及自带 Key 的
    Provider 直接请求用户上游而不经过 Relay。
 
@@ -236,7 +239,7 @@ Get-Service Cloudflared
 
 ## 回滚与紧急停止
 
-先确定故障属于 Web、Relay 还是 Bridge，只回滚对应组件：
+先确定故障属于 Web、Relay 还是 Bridge，只回滚对应组件。需要立即阻断模型成本时，先把实际 Relay 配置的 `RELAY_ENABLED` 改为 `"0"` 并只部署 Relay；这一开关不会影响 Web 的本地手写、导入导出和备份能力。
 
 ```powershell
 npx wrangler rollback --config .deploy-local/wrangler-relay.toml

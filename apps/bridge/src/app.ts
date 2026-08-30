@@ -5,6 +5,26 @@ import Fastify, { type FastifyInstance } from "fastify";
 
 import type { BridgeConfig } from "./config.js";
 
+const MAX_REQUEST_BODY_BYTES = 512 * 1024;
+const MAX_MESSAGES = 128;
+const MAX_TOOLS = 16;
+const MAX_OUTPUT_TOKENS = 32_000;
+const ALLOWED_BODY_FIELDS = new Set([
+  "max_tokens",
+  "messages",
+  "model",
+  "prompt_cache_key",
+  "reasoning_effort",
+  "response_format",
+  "stop",
+  "stream",
+  "stream_options",
+  "temperature",
+  "tool_choice",
+  "tools",
+  "top_p",
+]);
+
 export interface BuildBridgeOptions {
   config: BridgeConfig;
   fetch?: typeof fetch;
@@ -16,7 +36,7 @@ export function buildBridge(options: BuildBridgeOptions): FastifyInstance {
   let activeRequests = 0;
   const app = Fastify({
     logger: options.logger ?? true,
-    bodyLimit: 2 * 1024 * 1024,
+    bodyLimit: MAX_REQUEST_BODY_BYTES,
     requestTimeout: 30_000,
   });
 
@@ -46,7 +66,8 @@ export function buildBridge(options: BuildBridgeOptions): FastifyInstance {
         },
       });
     }
-    if (!isJsonObject(request.body)) {
+    const safeBody = sanitizeRelayBody(request.body);
+    if (!safeBody) {
       return reply.code(400).send({
         error: {
           code: "bridge.invalid_body",
@@ -92,7 +113,7 @@ export function buildBridge(options: BuildBridgeOptions): FastifyInstance {
             "content-type": "application/json",
           },
           body: JSON.stringify({
-            ...request.body,
+            ...safeBody,
             model: options.config.model,
           }),
           signal: controller.signal,
@@ -146,6 +167,37 @@ export function buildBridge(options: BuildBridgeOptions): FastifyInstance {
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function sanitizeRelayBody(value: unknown): Record<string, unknown> | null {
+  if (
+    !isJsonObject(value) ||
+    Object.keys(value).some((field) => !ALLOWED_BODY_FIELDS.has(field)) ||
+    !Array.isArray(value.messages) ||
+    value.messages.length > MAX_MESSAGES ||
+    !value.messages.every(isJsonObject) ||
+    (value.tools !== undefined &&
+      (!Array.isArray(value.tools) ||
+        value.tools.length < 1 ||
+        value.tools.length > MAX_TOOLS))
+  ) {
+    return null;
+  }
+  const requestedMaxTokens = value.max_tokens;
+  if (
+    requestedMaxTokens !== undefined &&
+    (!Number.isInteger(requestedMaxTokens) ||
+      (requestedMaxTokens as number) < 1)
+  ) {
+    return null;
+  }
+  return {
+    ...value,
+    max_tokens:
+      requestedMaxTokens === undefined
+        ? MAX_OUTPUT_TOKENS
+        : Math.min(requestedMaxTokens as number, MAX_OUTPUT_TOKENS),
+  };
 }
 
 function sameSecret(actual: string, expected: string): boolean {

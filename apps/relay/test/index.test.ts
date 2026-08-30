@@ -13,8 +13,15 @@ function env(
       remaining: number;
       resetAt: number;
     };
+    globalQuota?: {
+      allowed: boolean;
+      limit: number;
+      remaining: number;
+      resetAt: number;
+    };
     sessionSigningKey?: string;
     rateLimitKeys?: string[];
+    relayEnabled?: string;
   } = {},
 ) {
   return {
@@ -26,6 +33,8 @@ function env(
     BRIDGE_SHARED_SECRET: "bridge-shared-secret",
     SESSION_SIGNING_KEY: input.sessionSigningKey ?? SECRET,
     TURNSTILE_SECRET_KEY: "turnstile-secret-key",
+    GLOBAL_DAILY_REQUEST_LIMIT: "1000",
+    RELAY_ENABLED: input.relayEnabled,
     RATE_LIMITER: {
       limit: async ({ key }: { key: string }) => {
         input.rateLimitKeys?.push(key);
@@ -34,15 +43,22 @@ function env(
     },
     SESSION_QUOTAS: {
       idFromName: (name: string) => name,
-      get: () => ({
+      get: (id: unknown) => ({
         fetch: async () =>
           Response.json(
-            input.quota ?? {
-              allowed: true,
-              limit: 60,
-              remaining: 59,
-              resetAt: 1_800_000_000,
-            },
+            String(id).startsWith("global:")
+              ? (input.globalQuota ?? {
+                  allowed: true,
+                  limit: 1_000,
+                  remaining: 999,
+                  resetAt: 1_800_000_000,
+                })
+              : (input.quota ?? {
+                  allowed: true,
+                  limit: 60,
+                  remaining: 59,
+                  resetAt: 1_800_000_000,
+                }),
           ),
       }),
     } as unknown as DurableObjectNamespace,
@@ -50,6 +66,11 @@ function env(
 }
 
 describe("Relay 请求入口", () => {
+  const validBody = {
+    messages: [{ role: "user", content: "继续" }],
+    stream: true,
+  };
+
   it("配置了弱会话签名密钥时 fail closed", async () => {
     const response = await relay.fetch(
       new Request("https://relay.example/session", { method: "GET" }),
@@ -106,7 +127,7 @@ describe("Relay 请求入口", () => {
       new Request("https://relay.example/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ messages: [] }),
+        body: JSON.stringify(validBody),
       }),
       env(),
     );
@@ -206,7 +227,7 @@ describe("Relay 请求入口", () => {
           cookie: `__Host-narralume_session=${session}`,
           origin: "https://demo.example.com",
         },
-        body: JSON.stringify({ messages: [] }),
+        body: JSON.stringify(validBody),
       }),
       env({ rateLimitKeys }),
     );
@@ -216,8 +237,9 @@ describe("Relay 请求入口", () => {
       "true",
     );
     expect(response.headers.get("x-trial-quota-remaining")).toBe("59");
+    expect(response.headers.get("x-trial-global-quota-remaining")).toBe("999");
     expect(rateLimitKeys).toHaveLength(1);
-    expect(rateLimitKeys[0]).toMatch(/^model:[0-9a-f-]+$/u);
+    expect(rateLimitKeys[0]).toMatch(/^model:[A-Za-z0-9_-]+$/u);
     expect(rateLimitKeys[0]).not.toContain("unknown-client");
   });
 
@@ -233,7 +255,7 @@ describe("Relay 请求入口", () => {
           cookie: `__Host-narralume_session=${session}`,
           origin: "https://evil.example.com",
         },
-        body: JSON.stringify({ messages: [] }),
+        body: JSON.stringify(validBody),
       }),
       env(),
     );
@@ -261,7 +283,7 @@ describe("Relay 请求入口", () => {
           cookie: `__Host-narralume_session=${session}`,
           origin: "https://demo.example.com",
         },
-        body: JSON.stringify({ messages: [] }),
+        body: JSON.stringify(validBody),
       }),
       env(),
     );
@@ -286,7 +308,7 @@ describe("Relay 请求入口", () => {
           "content-type": "application/json",
           cookie: `__Host-narralume_session=${session}`,
         },
-        body: JSON.stringify({ messages: [] }),
+        body: JSON.stringify(validBody),
       }),
       env({
         quota: {
@@ -302,6 +324,50 @@ describe("Relay 请求入口", () => {
     expect(response.headers.get("x-trial-quota-limit")).toBe("60");
     await expect(response.json()).resolves.toMatchObject({
       code: "session_quota_exhausted",
+    });
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it("紧急熔断关闭后不签发会话或调用模型", async () => {
+    const response = await relay.fetch(
+      new Request("https://relay.example/session", { method: "GET" }),
+      env({ relayEnabled: "0" }),
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "relay_disabled",
+    });
+  });
+
+  it("全局日额度耗尽后不再请求 Bridge", async () => {
+    const upstreamFetch = vi.fn();
+    vi.stubGlobal("fetch", upstreamFetch);
+    const session = await issueSession(SECRET, "unknown-client");
+    const resetAt = Math.floor(Date.now() / 1_000) + 60;
+    const response = await relay.fetch(
+      new Request("https://relay.example/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: `__Host-narralume_session=${session}`,
+        },
+        body: JSON.stringify(validBody),
+      }),
+      env({
+        globalQuota: {
+          allowed: false,
+          limit: 1_000,
+          remaining: 0,
+          resetAt,
+        },
+      }),
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("x-trial-global-quota-limit")).toBe("1000");
+    await expect(response.json()).resolves.toMatchObject({
+      code: "global_quota_exhausted",
     });
     expect(upstreamFetch).not.toHaveBeenCalled();
   });

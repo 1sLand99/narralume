@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   decideRelay,
+  RELAY_MAX_OUTPUT_TOKENS,
+  RELAY_REQUEST_BODY_MAX_BYTES,
   responseHeadersForRelay,
   type RelayEnv,
   type RelayRequestContext,
@@ -82,6 +84,102 @@ describe("公网 Relay 白名单", () => {
     });
     expect(decision.headers.authorization).toBeUndefined();
     expect(JSON.stringify(decision)).not.toContain("client-selected-model");
+  });
+
+  it("拒绝可放大候选数、绕过输出上限和其它未知字段", () => {
+    const base = {
+      model: "client-selected-model",
+      stream: true,
+      messages: [{ role: "user", content: "继续" }],
+    };
+    for (const body of [
+      { ...base, n: 128 },
+      { ...base, max_completion_tokens: 100_000 },
+      { ...base, user: "anonymous" },
+    ]) {
+      expect(decideRelay(env, request({ body }))).toMatchObject({
+        action: "reject",
+        status: 400,
+        code: "field_not_allowed",
+      });
+    }
+  });
+
+  it("重建白名单请求并钳制单次输出上限", () => {
+    const decision = decideRelay(
+      env,
+      request({
+        body: {
+          model: "ignored",
+          messages: [{ role: "user", content: "生成 JSON" }],
+          stream: true,
+          stream_options: { include_usage: true },
+          max_tokens: 100_000,
+          response_format: { type: "json_object" },
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "story_query",
+                description: "查询故事资料",
+                parameters: { type: "object", properties: {} },
+                strict: true,
+              },
+            },
+          ],
+          tool_choice: "auto",
+        },
+      }),
+    );
+
+    expect(decision.action).toBe("forward");
+    if (decision.action !== "forward") return;
+    expect(decision.body).toMatchObject({
+      model: "example-model",
+      max_tokens: RELAY_MAX_OUTPUT_TOKENS,
+      response_format: { type: "json_object" },
+      tools: [{ function: { name: "story_query" } }],
+    });
+    expect(decision.body.n).toBeUndefined();
+  });
+
+  it("拒绝超过字节上限和消息数量上限的请求", () => {
+    expect(
+      decideRelay(
+        env,
+        request({
+          body: {
+            messages: [
+              {
+                role: "user",
+                content: "x".repeat(RELAY_REQUEST_BODY_MAX_BYTES),
+              },
+            ],
+          },
+        }),
+      ),
+    ).toMatchObject({
+      action: "reject",
+      status: 413,
+      code: "request_too_large",
+    });
+    expect(
+      decideRelay(
+        env,
+        request({
+          body: {
+            messages: Array.from({ length: 129 }, () => ({
+              role: "user",
+              content: "x",
+            })),
+          },
+        }),
+      ),
+    ).toMatchObject({
+      action: "reject",
+      status: 400,
+      code: "invalid_body",
+    });
   });
 });
 

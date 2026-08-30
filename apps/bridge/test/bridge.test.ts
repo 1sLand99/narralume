@@ -82,6 +82,44 @@ describe("local provider bridge", () => {
     expect(JSON.parse(String(init?.body))).toMatchObject({
       model: "example-model",
       stream: true,
+      max_tokens: 32_000,
+    });
+    await app.close();
+  });
+
+  it("rejects cost-amplifying fields and clamps the output limit", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response("ok"));
+    const app = buildBridge({ config, fetch: fetchMock, logger: false });
+    const rejected = await app.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      headers: { "x-narrative-bridge-token": config.sharedSecret },
+      payload: {
+        messages: [{ role: "user", content: "继续" }],
+        n: 128,
+        max_completion_tokens: 100_000,
+      },
+    });
+
+    expect(rejected.statusCode).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const accepted = await app.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      headers: { "x-narrative-bridge-token": config.sharedSecret },
+      payload: {
+        messages: [{ role: "user", content: "继续" }],
+        max_tokens: 100_000,
+      },
+    });
+    expect(accepted.statusCode).toBe(200);
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)),
+    ).toMatchObject({
+      max_tokens: 32_000,
     });
     await app.close();
   });

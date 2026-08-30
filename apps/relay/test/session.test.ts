@@ -49,6 +49,36 @@ describe("Relay 匿名会话", () => {
     ).resolves.toBeNull();
   });
 
+  it("同一风险主体在同一额度窗口重复验证不会重置会话 ID", async () => {
+    const now = Date.UTC(2026, 7, 17, 6);
+    const first = await issueSession(SECRET, "203.0.113.1", now);
+    const second = await issueSession(SECRET, "203.0.113.1", now + 3_600_000);
+    const nextWindow = await issueSession(
+      SECRET,
+      "203.0.113.1",
+      Date.UTC(2026, 7, 18),
+    );
+    const firstSession = await verifySession(first, SECRET, "203.0.113.1", now);
+    const secondSession = await verifySession(
+      second,
+      SECRET,
+      "203.0.113.1",
+      now,
+    );
+    const nextSession = await verifySession(
+      nextWindow,
+      SECRET,
+      "203.0.113.1",
+      Date.UTC(2026, 7, 18),
+    );
+
+    expect(firstSession).toMatchObject({
+      id: secondSession?.id,
+      exp: secondSession?.exp,
+    });
+    expect(nextSession?.id).not.toBe(firstSession?.id);
+  });
+
   it("读取并生成安全 Cookie", async () => {
     const token = await issueSession(SECRET, "203.0.113.1");
     expect(

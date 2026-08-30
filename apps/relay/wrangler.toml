@@ -2,21 +2,23 @@
 # Bridge 凭据，浏览器不持有任何真实密钥。
 name = "narralume-relay"
 main = "src/index.ts"
-compatibility_date = "2026-08-01"
+compatibility_date = "2026-08-30"
 
 [vars]
 UPSTREAM_BASE_URL = "https://bridge.example.com/v1"
 RELAY_MODEL = "example-model"
 WEB_ORIGIN = "https://demo.example.com"
+GLOBAL_DAILY_REQUEST_LIMIT = "1000"
+RELAY_ENABLED = "1"
 
 [secrets]
 required = [
   "BRIDGE_ACCESS_CLIENT_ID",
-    "BRIDGE_ACCESS_CLIENT_SECRET",
-    "BRIDGE_SHARED_SECRET",
-    "TURNSTILE_SECRET_KEY",
-    "SESSION_SIGNING_KEY"
-  ]
+  "BRIDGE_ACCESS_CLIENT_SECRET",
+  "BRIDGE_SHARED_SECRET",
+  "TURNSTILE_SECRET_KEY",
+  "SESSION_SIGNING_KEY"
+]
 
 [[ratelimits]]
 name = "RATE_LIMITER"

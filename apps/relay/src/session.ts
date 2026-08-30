@@ -48,14 +48,23 @@ export async function issueSession(
   subject: string,
   nowMs = Date.now(),
 ): Promise<string> {
+  const key = await hmacKey(secret);
   const subjectSignature = await crypto.subtle.sign(
     "HMAC",
-    await hmacKey(secret),
+    key,
     encoder.encode(`subject:${subject}`),
   );
+  const nowSeconds = Math.floor(nowMs / 1_000);
+  const windowStart =
+    Math.floor(nowSeconds / SESSION_TTL_SECONDS) * SESSION_TTL_SECONDS;
+  const sessionSignature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    encoder.encode(`session:${subject}:${windowStart}`),
+  );
   const payload: VerifiedSession = {
-    exp: Math.floor(nowMs / 1000) + SESSION_TTL_SECONDS,
-    id: crypto.randomUUID(),
+    exp: windowStart + SESSION_TTL_SECONDS,
+    id: base64UrlEncode(new Uint8Array(sessionSignature)),
     sub: base64UrlEncode(new Uint8Array(subjectSignature)),
     v: 1,
   };
@@ -64,7 +73,7 @@ export async function issueSession(
   );
   const signature = await crypto.subtle.sign(
     "HMAC",
-    await hmacKey(secret),
+    key,
     encoder.encode(encodedPayload),
   );
   return `${encodedPayload}.${base64UrlEncode(new Uint8Array(signature))}`;

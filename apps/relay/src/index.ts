@@ -1,8 +1,10 @@
 import {
   decideRelay,
+  RELAY_REQUEST_BODY_MAX_BYTES,
   responseHeadersForRelay,
   type RelayEnv,
 } from "./relay-core.js";
+import { hasJsonContentType, readJsonWithLimit } from "./request-json.js";
 import {
   issueSession,
   isValidSessionSigningKey,
@@ -10,7 +12,12 @@ import {
   sessionFromCookie,
   verifySession,
 } from "./session.js";
-import { consumeSessionQuota, SessionQuota } from "./session-quota.js";
+import {
+  consumeGlobalQuota,
+  consumeSessionQuota,
+  DEFAULT_GLOBAL_DAILY_REQUEST_LIMIT,
+  SessionQuota,
+} from "./session-quota.js";
 import { validateTurnstile } from "./turnstile.js";
 
 interface RateLimiter {
@@ -26,6 +33,8 @@ interface Env {
   BRIDGE_SHARED_SECRET: string;
   SESSION_SIGNING_KEY: string;
   TURNSTILE_SECRET_KEY: string;
+  GLOBAL_DAILY_REQUEST_LIMIT?: string;
+  RELAY_ENABLED?: string;
   RATE_LIMITER: RateLimiter;
   SESSION_QUOTAS: DurableObjectNamespace;
 }
@@ -38,7 +47,7 @@ function corsHeaders(allowedOrigin: string | null): Record<string, string> {
     "access-control-allow-headers": "content-type, accept",
     "access-control-allow-credentials": "true",
     "access-control-expose-headers":
-      "x-trial-quota-limit, x-trial-quota-remaining, x-trial-quota-reset, retry-after",
+      "x-trial-quota-limit, x-trial-quota-remaining, x-trial-quota-reset, x-trial-global-quota-limit, x-trial-global-quota-remaining, x-trial-global-quota-reset, retry-after",
     "access-control-max-age": "86400",
     vary: "origin",
   };
@@ -83,8 +92,18 @@ function configured(env: Env): boolean {
     env.BRIDGE_ACCESS_CLIENT_SECRET &&
     env.BRIDGE_SHARED_SECRET &&
     isValidSessionSigningKey(env.SESSION_SIGNING_KEY) &&
-    env.TURNSTILE_SECRET_KEY,
+    env.TURNSTILE_SECRET_KEY &&
+    globalDailyRequestLimit(env) !== null,
   );
+}
+
+function globalDailyRequestLimit(env: Env): number | null {
+  if (env.GLOBAL_DAILY_REQUEST_LIMIT === undefined)
+    return DEFAULT_GLOBAL_DAILY_REQUEST_LIMIT;
+  const value = Number(env.GLOBAL_DAILY_REQUEST_LIMIT);
+  return Number.isInteger(value) && value >= 1 && value <= 100_000
+    ? value
+    : null;
 }
 
 async function admitted(env: Env, key: string): Promise<boolean> {
@@ -124,6 +143,16 @@ export default {
         {
           code: "relay_not_configured",
           message: "The relay is not securely configured yet.",
+        },
+        origin,
+      );
+    }
+    if (env.RELAY_ENABLED === "0") {
+      return reject(
+        503,
+        {
+          code: "relay_disabled",
+          message: "The public model relay is temporarily disabled.",
         },
         origin,
       );
@@ -189,19 +218,31 @@ export default {
           origin,
         );
       }
-      let body: unknown;
-      try {
-        body = await request.json();
-      } catch {
+      if (!hasJsonContentType(request)) {
         return reject(
-          400,
+          415,
           {
-            code: "invalid_json",
-            message: "The request body must be valid JSON.",
+            code: "unsupported_media_type",
+            message: "The request content type must be application/json.",
           },
           origin,
         );
       }
+      const parsed = await readJsonWithLimit(request, 4_096);
+      if (!parsed.ok) {
+        return reject(
+          parsed.reason === "request_too_large" ? 413 : 400,
+          {
+            code: parsed.reason,
+            message:
+              parsed.reason === "request_too_large"
+                ? "The request body is too large."
+                : "The request body must be valid JSON.",
+          },
+          origin,
+        );
+      }
+      const body = parsed.value;
       const token =
         body && typeof body === "object" && !Array.isArray(body)
           ? (body as Record<string, unknown>).token
@@ -309,19 +350,34 @@ export default {
       );
     }
 
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
+    if (!hasJsonContentType(request)) {
       return reject(
-        400,
+        415,
         {
-          code: "invalid_json",
-          message: "The request body must be valid JSON.",
+          code: "unsupported_media_type",
+          message: "The request content type must be application/json.",
         },
         origin,
       );
     }
+    const parsed = await readJsonWithLimit(
+      request,
+      RELAY_REQUEST_BODY_MAX_BYTES,
+    );
+    if (!parsed.ok) {
+      return reject(
+        parsed.reason === "request_too_large" ? 413 : 400,
+        {
+          code: parsed.reason,
+          message:
+            parsed.reason === "request_too_large"
+              ? `The request body must not exceed ${RELAY_REQUEST_BODY_MAX_BYTES} bytes.`
+              : "The request body must be valid JSON.",
+        },
+        origin,
+      );
+    }
+    const body = parsed.value;
     const relayEnv: RelayEnv = {
       upstreamBaseUrl: env.UPSTREAM_BASE_URL,
       model: env.RELAY_MODEL,
@@ -377,6 +433,44 @@ export default {
       );
     }
 
+    const globalLimit = globalDailyRequestLimit(env)!;
+    let globalQuota;
+    try {
+      globalQuota = await consumeGlobalQuota(env.SESSION_QUOTAS, globalLimit);
+    } catch {
+      return reject(
+        503,
+        {
+          code: "quota_unavailable",
+          message: "The trial quota service is temporarily unavailable.",
+        },
+        origin,
+        quotaHeaders,
+      );
+    }
+    const globalQuotaHeaders = {
+      "x-trial-global-quota-limit": String(globalQuota.limit),
+      "x-trial-global-quota-remaining": String(globalQuota.remaining),
+      "x-trial-global-quota-reset": String(globalQuota.resetAt),
+    };
+    if (!globalQuota.allowed) {
+      return reject(
+        429,
+        {
+          code: "global_quota_exhausted",
+          message: "The public trial has reached its daily model call limit.",
+        },
+        origin,
+        {
+          ...quotaHeaders,
+          ...globalQuotaHeaders,
+          "retry-after": String(
+            Math.max(1, globalQuota.resetAt - Math.floor(Date.now() / 1_000)),
+          ),
+        },
+      );
+    }
+
     const controller = new AbortController();
     // 在线体验允许模型较慢地返回首个响应片段；Bridge 和模型客户端仍有各自的更长时限。
     const timeout = setTimeout(() => controller.abort(), 120_000);
@@ -404,7 +498,7 @@ export default {
               : "The model service is temporarily unavailable.",
         },
         origin,
-        quotaHeaders,
+        { ...quotaHeaders, ...globalQuotaHeaders },
       );
     } finally {
       clearTimeout(timeout);
@@ -414,6 +508,7 @@ export default {
       headers: {
         ...responseHeadersForRelay(upstream.headers.entries(), origin),
         ...quotaHeaders,
+        ...globalQuotaHeaders,
       },
     });
   },

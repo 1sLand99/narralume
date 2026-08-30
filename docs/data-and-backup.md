@@ -80,4 +80,6 @@ powershell -File scripts/docker-stop.ps1
 
 项目维护者还应检查恢复过程中是否留下 `.partial`、`.partial-shm` 或 `.partial-wal` 文件，并为每个发布候选保留一条可复核的恢复记录。
 
+维护者可先运行 `npm run test:release:recovery` 回归备份恢复、孤儿任务中断和 partial 恢复契约；发布候选再运行 `npm run verify:release`，依次执行代码校验、高风险 E2E、恢复回归和真实模型矩阵。这些自动化只验证已编码的契约，不能替代上面的独立目录恢复演练和人工核对。
+
 如果备份包含真实模型凭据，不要把哈希旁边的密钥、完整数据库或模型响应上传到公开 Issue、CI artifact 或截图中。安全事件处理见 [SECURITY.md](../SECURITY.md)。

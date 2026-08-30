@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { SESSION_REQUEST_LIMIT, SessionQuota } from "../src/session-quota.js";
+import {
+  consumeGlobalQuota,
+  SESSION_REQUEST_LIMIT,
+  SessionQuota,
+} from "../src/session-quota.js";
 
 function durableState(initial?: { count: number; expiresAt: number }) {
   let stored = initial;
@@ -31,7 +35,10 @@ describe("Relay 签名会话额度", () => {
     const response = await quota.fetch(
       new Request("https://quota.internal/consume", {
         method: "POST",
-        headers: { "x-session-expires-at": String(now + 3_600) },
+        headers: {
+          "x-quota-expires-at": String(now + 3_600),
+          "x-quota-limit": "60",
+        },
       }),
     );
 
@@ -57,7 +64,10 @@ describe("Relay 签名会话额度", () => {
     const response = await quota.fetch(
       new Request("https://quota.internal/consume", {
         method: "POST",
-        headers: { "x-session-expires-at": String(expiresAt) },
+        headers: {
+          "x-quota-expires-at": String(expiresAt),
+          "x-quota-limit": "60",
+        },
       }),
     );
 
@@ -72,5 +82,36 @@ describe("Relay 签名会话额度", () => {
     const { state, storage } = durableState({ count: 10, expiresAt: 1 });
     await new SessionQuota(state).alarm();
     expect(storage.deleteAll).toHaveBeenCalledOnce();
+  });
+
+  it("按 UTC 日分片并传递全局额度上限", async () => {
+    const calls: { name: string; request: Request }[] = [];
+    const namespace = {
+      idFromName: (name: string) => name,
+      get: (name: string) => ({
+        fetch: async (_url: string, init: RequestInit) => {
+          calls.push({
+            name,
+            request: new Request("https://quota.internal", init),
+          });
+          return Response.json({
+            allowed: true,
+            limit: 500,
+            remaining: 499,
+            resetAt: 1_800_057_600,
+          });
+        },
+      }),
+    } as unknown as DurableObjectNamespace;
+
+    const result = await consumeGlobalQuota(
+      namespace,
+      500,
+      Date.UTC(2026, 7, 30, 12),
+    );
+
+    expect(result.remaining).toBe(499);
+    expect(calls[0]?.name).toMatch(/^global:\d+$/u);
+    expect(calls[0]?.request.headers.get("x-quota-limit")).toBe("500");
   });
 });

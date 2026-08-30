@@ -41,12 +41,14 @@
     "test:real:autopilot": "tsx scripts/autopilot-real-smoke.ts",
     "test:real:studio": "tsx scripts/studio-real-smoke.ts",
     "test:real:delivery": "tsx scripts/delivery-real-smoke.ts",
+    "test:real:matrix": "npm run test:real:capabilities && npm run test:real:chapter && npm run test:real:autopilot && npm run test:real:studio && npm run test:real:delivery",
+    "test:release:recovery": "vitest run apps/server/test/lifecycle-api.test.ts apps/server/test/backup-restore-r8.test.ts apps/server/test/run-partial-recovery.test.ts packages/persistence/test/orphan-interruption.test.ts",
     "seed:example": "tsx scripts/seed-example.ts",
     "start:bridge": "npm run start -w @narralume/bridge",
     "typecheck": "tsc -b --pretty false && tsc -p scripts/tsconfig.json --noEmit --pretty false",
     "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run test:evidence && npm run licenses:check && npm run build",
     "verify:ci": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run test:evidence && npm run licenses:check",
-    "verify:release": "npm run verify:ci && npm run test:e2e && npm run test:real"
+    "verify:release": "npm run verify:ci && npm run test:e2e && npm run test:release:recovery && npm run test:real:matrix"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

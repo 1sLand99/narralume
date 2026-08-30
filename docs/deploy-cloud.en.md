@@ -74,10 +74,11 @@ These conditions only apply if you decide to maintain a public Relay:
 4. The Relay accepts only `/v1/chat/completions`, strips client authentication headers, and enforces the model allowlist.
 5. The Relay validates the single Web Origin, request-body limits, upstream timeouts, and error responses, and does not log prompts, request bodies, or response bodies.
 6. For origins that require Turnstile, the Relay must call Siteverify and validate the hostname and action; rendering the widget alone is not protection.
-7. Origins from mainland China are issued sessions directly by the Relay based on `request.cf.country`; other origins receive a 24-hour, IP-bound `__Host-`, `HttpOnly`, `Secure`, `SameSite=Strict` cookie after passing Turnstile.
+7. Origins from mainland China are issued sessions directly by the Relay based on `request.cf.country`; other origins receive an IP-bound `__Host-`, `HttpOnly`, `Secure`, `SameSite=Strict` cookie that expires at the next UTC-day boundary after passing Turnstile.
    `SESSION_SIGNING_KEY` must be 64 lowercase hexadecimal characters; generate it with `openssl rand -hex 32`, and keep it separate from the Bridge shared secret.
-8. Model requests are limited to 30 per minute per signed session, with a Durable Object atomically enforcing 60 effective calls per session.
-9. On the Cloudflare side, configure cost alerts, minimize logging, and keep an operational path that can shut down the Relay/Tunnel immediately.
+8. The Relay rebuilds only allowlisted Chat Completions fields: at most 512 KiB per body, 128 messages, 16 tools, and 32,000 output tokens. Multiple candidates, alternate output-limit fields, and unknown fields are rejected. The Bridge repeats the top-level allowlist and output cap before the real upstream key is used.
+9. Model requests are limited to 30 per minute per signed session. Repeating verification for the same source within one UTC day does not reset its identity; a Durable Object atomically enforces 60 calls per risk subject and a default 1,000 effective calls across the site. Set the actual site cap explicitly with the non-secret Relay variable `GLOBAL_DAILY_REQUEST_LIMIT`.
+10. `RELAY_ENABLED="0"` is an application-level emergency fuse that does not depend on the Bridge or Tunnel. Cost alerts and minimal logging are still required on the Cloudflare side.
 
 ## First-time preparation
 
@@ -98,6 +99,8 @@ The Relay Worker needs these remote secrets:
 - `BRIDGE_SHARED_SECRET`
 - `TURNSTILE_SECRET_KEY`
 - `SESSION_SIGNING_KEY`
+
+The real Relay configuration must also set two non-secret variables. `GLOBAL_DAILY_REQUEST_LIMIT` is the UTC-day site-wide call limit (`1`–`100000`); `RELAY_ENABLED` is normally `"1"` and is changed to `"0"` for an emergency stop before deploying only the Relay. The public template defaults are `"1000"` and `"1"`.
 
 Write each value into the real Relay configuration. The commands read values interactively; do not put values into your command history:
 
@@ -182,7 +185,7 @@ Accept in this order; do not start with a real model request:
 4. The Bridge's public entry point returns an Access denial without Access credentials; the local service must not be reachable directly.
 5. Origins from mainland China receive a secure cookie without loading Turnstile; other origins receive a cookie after Turnstile succeeds, while a wrong token, hostname, or action is rejected.
 6. Run one controlled streaming generation to confirm the full path through Relay, Access, Bridge, and the upstream.
-7. Verify the rate limit, the 60-call session quota, request-body limits, timeouts, and rejection of models outside the allowlist.
+7. Verify the rate limit, the 60-call risk-subject daily quota, the site-wide daily quota, the 512 KiB request limit, the 32k output cap, unknown-field rejection, timeouts, and rejection of models outside the allowlist.
 8. Verify OPFS persistence after a browser refresh, SQLite download/import/export, and that a bring-your-own-key provider calls the user's upstream directly without going through the Relay.
 
 These basic probes carry no sensitive information; replace the variables with the actual public addresses:
@@ -221,7 +224,7 @@ Troubleshoot from the inside of the chain outward: Bridge local health, the clou
 
 ## Rollback and emergency stop
 
-First determine whether the fault is in Web, Relay, or Bridge, and roll back only that component:
+First determine whether the fault is in Web, Relay, or Bridge, and roll back only that component. To stop model spend immediately, set `RELAY_ENABLED` to `"0"` in the real Relay configuration and deploy only the Relay; local writing, import/export, and backup features in the Web app remain available.
 
 ```powershell
 npx wrangler rollback --config .deploy-local/wrangler-relay.toml
