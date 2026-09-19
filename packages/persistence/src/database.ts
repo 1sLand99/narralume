@@ -42,6 +42,9 @@ import { migration038 } from "./migrations/038-drop-run-budget-limits.js";
 import { migration039 } from "./migrations/039-resource-lifecycle.js";
 import { migration040 } from "./migrations/040-project-write-guard.js";
 import { migration041 } from "./migrations/041-review-author-decisions.js";
+import { migration042 } from "./migrations/042-cocreate-natural-speaker.js";
+import { migration043 } from "./migrations/043-persona-card-profile.js";
+import { migration044 } from "./migrations/044-lorebooks.js";
 
 export interface Migration {
   readonly version: number;
@@ -105,6 +108,9 @@ const MIGRATIONS: readonly Migration[] = [
   migration039,
   migration040,
   migration041,
+  migration042,
+  migration043,
+  migration044,
 ];
 
 interface MigrationRow {

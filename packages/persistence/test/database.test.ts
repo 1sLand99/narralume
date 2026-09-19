@@ -1,4 +1,8 @@
-import { createProject, transitionProjectPhase } from "@narralume/domain";
+import {
+  createDefaultPersonaCardProfile,
+  createProject,
+  transitionProjectPhase,
+} from "@narralume/domain";
 import { NodeNarrativeDatabase } from "../src/node.js";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -27,6 +31,8 @@ import { migration021 } from "../src/migrations/021-cross-chapter-settlement.js"
 import { migration022 } from "../src/migrations/022-project-foundation-requests.js";
 import { migration023 } from "../src/migrations/023-chapter-document-identity.js";
 import { migration041 } from "../src/migrations/041-review-author-decisions.js";
+import { migration042 } from "../src/migrations/042-cocreate-natural-speaker.js";
+import { migration043 } from "../src/migrations/043-persona-card-profile.js";
 
 const MIGRATIONS_UP_TO_023 = [
   migration001,
@@ -72,8 +78,8 @@ function database(): NodeNarrativeDatabase {
 describe("NodeNarrativeDatabase", () => {
   it("applies the B1 migrations idempotently and enforces checksums", () => {
     const db = database();
-    expect(db.currentMigration()).toBe(41);
-    expect(db.migrate()).toBe(41);
+    expect(db.currentMigration()).toBe(44);
+    expect(db.migrate()).toBe(44);
     expect(
       db.raw
         .prepare("SELECT checksum FROM schema_migrations WHERE version = 23")
@@ -127,6 +133,112 @@ describe("NodeNarrativeDatabase", () => {
     ]);
   });
 
+  it("replaces legacy auto speaker sessions with natural speaker sessions", () => {
+    const db = new NodeNarrativeDatabase();
+    databases.push(db);
+    db.raw.exec(`
+      CREATE TABLE projects (
+        id TEXT PRIMARY KEY,
+        deleted_at TEXT
+      ) STRICT;
+      CREATE TABLE story_personas (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        kind TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE outline_nodes (id TEXT PRIMARY KEY) STRICT;
+      CREATE TABLE cocreate_sessions (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('active','paused','archived')),
+        speaker_policy TEXT NOT NULL CHECK (speaker_policy IN ('manual','round_robin','auto')),
+        active_branch_id TEXT,
+        target_outline_node_id TEXT REFERENCES outline_nodes(id) ON DELETE SET NULL,
+        author_persona_id TEXT REFERENCES story_personas(id) ON DELETE SET NULL,
+        director_note TEXT,
+        context_turns INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        version INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE cocreate_participants (
+        session_id TEXT NOT NULL REFERENCES cocreate_sessions(id) ON DELETE CASCADE,
+        persona_id TEXT NOT NULL REFERENCES story_personas(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        enabled INTEGER NOT NULL,
+        talkativeness REAL NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(session_id, persona_id)
+      ) WITHOUT ROWID;
+      CREATE TABLE story_branches (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES cocreate_sessions(id) ON DELETE CASCADE
+      ) STRICT;
+      INSERT INTO projects(id, deleted_at) VALUES ('p1', NULL);
+      INSERT INTO story_personas(id, project_id, kind)
+      VALUES ('n1', 'p1', 'narrator');
+      INSERT INTO cocreate_sessions(
+        id, project_id, title, status, speaker_policy, active_branch_id,
+        target_outline_node_id, author_persona_id, director_note,
+        context_turns, created_at, updated_at, version
+      ) VALUES (
+        's1', 'p1', 'Legacy room', 'active', 'auto', NULL,
+        NULL, NULL, NULL, 24, '2026-01-01', '2026-01-01', 0
+      );
+      INSERT INTO cocreate_participants(
+        session_id, persona_id, position, enabled, talkativeness, created_at
+      ) VALUES ('s1', 'n1', 0, 1, 0.5, '2026-01-01');
+    `);
+
+    expect(db.migrate([migration042])).toBe(42);
+    expect(
+      db.raw
+        .prepare("SELECT speaker_policy FROM cocreate_sessions WHERE id = 's1'")
+        .get(),
+    ).toEqual({ speaker_policy: "natural" });
+    expect(db.raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(() =>
+      db.raw
+        .prepare(
+          `INSERT INTO cocreate_sessions(
+            id, project_id, title, status, speaker_policy, active_branch_id,
+            target_outline_node_id, author_persona_id, director_note,
+            context_turns, created_at, updated_at, version
+          ) VALUES ('s2', 'p1', 'No auto', 'active', 'auto', NULL, NULL,
+            NULL, NULL, 24, '2026-01-01', '2026-01-01', 0)`,
+        )
+        .run(),
+    ).toThrow();
+  });
+
+  it("backfills existing personas with a valid native card profile", () => {
+    const db = new NodeNarrativeDatabase();
+    databases.push(db);
+    db.raw.exec(`
+      CREATE TABLE story_personas (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL
+      ) STRICT;
+      INSERT INTO story_personas(id, name) VALUES ('legacy', '旧角色');
+    `);
+
+    expect(db.migrate([migration043])).toBe(43);
+    const row = db.raw
+      .prepare("SELECT profile_json FROM story_personas WHERE id = 'legacy'")
+      .get() as { profile_json: string };
+    expect(JSON.parse(row.profile_json)).toEqual(
+      createDefaultPersonaCardProfile(),
+    );
+    expect(() =>
+      db.raw
+        .prepare(
+          "UPDATE story_personas SET profile_json = 'not-json' WHERE id = 'legacy'",
+        )
+        .run(),
+    ).toThrow();
+  });
+
   it("installs project write guards while preserving run cleanup updates", () => {
     const db = database();
     const triggers = db.raw
@@ -172,7 +284,7 @@ describe("NodeNarrativeDatabase", () => {
         project.createdAt,
       );
 
-    expect(db.migrate()).toBe(41);
+    expect(db.migrate()).toBe(44);
     expect(
       db.raw
         .prepare(
@@ -190,7 +302,7 @@ describe("NodeNarrativeDatabase", () => {
       .prepare("UPDATE schema_migrations SET checksum = ? WHERE version = 23")
       .run(MUTATED_MIGRATION_023_CHECKSUM);
 
-    expect(db.migrate()).toBe(41);
+    expect(db.migrate()).toBe(44);
     expect(
       db.raw
         .prepare("SELECT checksum FROM schema_migrations WHERE version = 23")

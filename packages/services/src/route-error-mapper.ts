@@ -17,6 +17,7 @@ import {
   DocumentVersionConflictError,
   ImportedAgentSkillVersionConflictError,
   LongNovelPersistenceError,
+  LorePersistenceError,
   NarrativeStateError,
   PersistenceNotFoundError,
   RunPersistenceError,
@@ -135,6 +136,13 @@ export function mapRouteError(
       code: shaped.code,
       message: shaped.message,
       ...(shaped.details === undefined ? {} : { details: shaped.details }),
+    };
+  }
+  if (error instanceof LorePersistenceError) {
+    return {
+      status: error.code.endsWith(".conflict") ? 409 : 422,
+      code: error.code,
+      message: error.message,
     };
   }
   // narrative 层的 CanonCandidateError 与 services 无依赖环，按同构形状识别。

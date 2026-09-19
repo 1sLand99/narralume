@@ -1134,6 +1134,23 @@ export interface ProjectFoundationTaskCreated {
 
 export type PersonaKind = "author" | "narrator" | "character";
 
+export interface PersonaCardProfile {
+  personality: string | null;
+  scenario: string | null;
+  exampleDialogue: string | null;
+  greetings: string[];
+  creator: {
+    name: string | null;
+    notes: string | null;
+    version: string | null;
+    tags: string[];
+  };
+  source: {
+    format: "native" | "character-card-v2" | "character-card-v3";
+    importedAt: string | null;
+  };
+}
+
 export interface StoryPersona {
   id: string;
   projectId: string;
@@ -1143,10 +1160,118 @@ export interface StoryPersona {
   description: string | null;
   instructions: string;
   voice: Record<string, unknown>;
+  profile: PersonaCardProfile;
   status: "active" | "retired";
   createdAt: string;
   updatedAt: string;
   version: number;
+}
+
+export interface Lorebook {
+  id: string;
+  projectId: string;
+  name: string;
+  description: string | null;
+  enabledGlobally: boolean;
+  scanTurns: number;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+}
+
+export interface LoreEntry {
+  id: string;
+  lorebookId: string;
+  title: string;
+  content: string;
+  keys: string[];
+  constant: boolean;
+  priority: number;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+}
+
+export interface LorebookDetail {
+  lorebook: Lorebook;
+  entries: LoreEntry[];
+}
+
+export interface LorebookBindingState {
+  targetId: string;
+  lorebookIds: string[];
+  version: number;
+  updatedAt: string;
+}
+
+export type PersonaCardImportTarget =
+  | {
+      mode: "create";
+      kind: "character" | "narrator";
+      entityId: string | null;
+      nameOverride?: string;
+    }
+  | {
+      mode: "replace";
+      personaId: string;
+      expectedVersion: number;
+      entityId?: string | null;
+      nameOverride?: string;
+    };
+
+export type PersonaCardImportDisposition =
+  | "imported"
+  | "ignored"
+  | "unsupported";
+
+export type PersonaCardImportReasonCode =
+  | "safe-field"
+  | "creator-metadata"
+  | "prompt-override-blocked"
+  | "extension-not-executed"
+  | "character-book-imported"
+  | "asset-deferred"
+  | "group-greeting-deferred"
+  | "unknown-field-ignored";
+
+export interface PersonaCardImportReport {
+  sourceFormat: "character-card-v3-json" | "character-card-v3-png";
+  specVersion: "3.0";
+  items: Array<{
+    path: string;
+    disposition: PersonaCardImportDisposition;
+    reasonCode: PersonaCardImportReasonCode;
+  }>;
+}
+
+export interface PersonaCardImportResponse {
+  persona: StoryPersona;
+  report: PersonaCardImportReport;
+  idempotentReplay: boolean;
+}
+
+export interface CharacterCardV3Export {
+  spec: "chara_card_v3";
+  spec_version: "3.0";
+  data: {
+    name: string;
+    description: string;
+    personality: string;
+    scenario: string;
+    first_mes: string;
+    mes_example: string;
+    creator_notes: string;
+    system_prompt: "";
+    post_history_instructions: "";
+    alternate_greetings: string[];
+    tags: string[];
+    creator: string;
+    character_version: string;
+    extensions: Record<string, never>;
+    group_only_greetings: [];
+  };
 }
 
 export interface CoCreateSession {
@@ -1154,7 +1279,7 @@ export interface CoCreateSession {
   projectId: string;
   title: string;
   status: "active" | "paused" | "archived";
-  speakerPolicy: "manual" | "round_robin" | "auto";
+  speakerPolicy: "manual" | "round_robin" | "natural";
   activeBranchId: string | null;
   targetOutlineNodeId: string | null;
   authorPersonaId: string | null;
@@ -2359,7 +2484,13 @@ export async function createPersona(
   projectId: string,
   input: Pick<
     StoryPersona,
-    "kind" | "entityId" | "name" | "description" | "instructions" | "voice"
+    | "kind"
+    | "entityId"
+    | "name"
+    | "description"
+    | "instructions"
+    | "voice"
+    | "profile"
   >,
 ): Promise<StoryPersona> {
   return requestJson(
@@ -2378,12 +2509,178 @@ export async function updatePersona(
     | "description"
     | "instructions"
     | "voice"
+    | "profile"
     | "status"
   > & { expectedVersion: number },
 ): Promise<StoryPersona> {
   return requestJson(
     `/api/personas/${encodeURIComponent(personaId)}`,
     jsonRequest("PUT", input),
+  );
+}
+
+interface ImportPersonaCardInput {
+  requestId: string;
+  filename: string;
+  contentBase64: string;
+  target: PersonaCardImportTarget;
+}
+
+export async function importPersonaCardJson(
+  projectId: string,
+  input: ImportPersonaCardInput,
+): Promise<PersonaCardImportResponse> {
+  return requestJson(
+    `/api/projects/${encodeURIComponent(projectId)}/persona-card-imports/json`,
+    jsonRequest("POST", input),
+  );
+}
+
+export async function importPersonaCardPng(
+  projectId: string,
+  input: ImportPersonaCardInput,
+): Promise<PersonaCardImportResponse> {
+  return requestJson(
+    `/api/projects/${encodeURIComponent(projectId)}/persona-card-imports/png`,
+    jsonRequest("POST", input),
+  );
+}
+
+export async function getPersonaCard(
+  personaId: string,
+  signal?: AbortSignal,
+): Promise<CharacterCardV3Export> {
+  return requestJson(
+    `/api/personas/${encodeURIComponent(personaId)}/card`,
+    signal ? { signal } : {},
+  );
+}
+
+export async function getLorebooks(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<LorebookDetail[]> {
+  return requestJson(
+    "/api/projects/" + encodeURIComponent(projectId) + "/lorebooks",
+    signal ? { signal } : {},
+  );
+}
+
+export async function createLorebook(
+  projectId: string,
+  input: Pick<
+    Lorebook,
+    "name" | "description" | "enabledGlobally" | "scanTurns" | "enabled"
+  >,
+): Promise<Lorebook> {
+  return requestJson(
+    "/api/projects/" + encodeURIComponent(projectId) + "/lorebooks",
+    jsonRequest("POST", input),
+  );
+}
+
+export async function updateLorebook(
+  lorebookId: string,
+  input: Pick<
+    Lorebook,
+    "name" | "description" | "enabledGlobally" | "scanTurns" | "enabled"
+  > & { expectedVersion: number },
+): Promise<Lorebook> {
+  return requestJson(
+    "/api/lorebooks/" + encodeURIComponent(lorebookId),
+    jsonRequest("PUT", input),
+  );
+}
+
+export async function deleteLorebook(
+  lorebookId: string,
+  expectedVersion: number,
+): Promise<{ deleted: true }> {
+  return requestJson(
+    "/api/lorebooks/" + encodeURIComponent(lorebookId),
+    jsonRequest("DELETE", { expectedVersion }),
+  );
+}
+
+export async function createLoreEntry(
+  lorebookId: string,
+  input: Pick<
+    LoreEntry,
+    "title" | "content" | "keys" | "constant" | "priority" | "enabled"
+  >,
+): Promise<LoreEntry> {
+  return requestJson(
+    "/api/lorebooks/" + encodeURIComponent(lorebookId) + "/entries",
+    jsonRequest("POST", input),
+  );
+}
+
+export async function updateLoreEntry(
+  entryId: string,
+  input: Pick<
+    LoreEntry,
+    "title" | "content" | "keys" | "constant" | "priority" | "enabled"
+  > & { expectedVersion: number },
+): Promise<LoreEntry> {
+  return requestJson(
+    "/api/lore-entries/" + encodeURIComponent(entryId),
+    jsonRequest("PUT", input),
+  );
+}
+
+export async function deleteLoreEntry(
+  entryId: string,
+  expectedVersion: number,
+): Promise<{ deleted: true }> {
+  return requestJson(
+    "/api/lore-entries/" + encodeURIComponent(entryId),
+    jsonRequest("DELETE", { expectedVersion }),
+  );
+}
+
+export async function getPersonaLorebookBindings(
+  personaId: string,
+  signal?: AbortSignal,
+): Promise<LorebookBindingState> {
+  return requestJson(
+    "/api/personas/" + encodeURIComponent(personaId) + "/lorebooks",
+    signal ? { signal } : {},
+  );
+}
+
+export async function replacePersonaLorebookBindings(
+  personaId: string,
+  lorebookIds: string[],
+  expectedVersion: number,
+): Promise<LorebookBindingState> {
+  return requestJson(
+    "/api/personas/" + encodeURIComponent(personaId) + "/lorebooks",
+    jsonRequest("PUT", { lorebookIds, expectedVersion }),
+  );
+}
+
+export async function getSessionLorebookBindings(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<LorebookBindingState> {
+  return requestJson(
+    "/api/cocreate/sessions/" +
+      encodeURIComponent(sessionId) +
+      "/lorebooks",
+    signal ? { signal } : {},
+  );
+}
+
+export async function replaceSessionLorebookBindings(
+  sessionId: string,
+  lorebookIds: string[],
+  expectedVersion: number,
+): Promise<LorebookBindingState> {
+  return requestJson(
+    "/api/cocreate/sessions/" +
+      encodeURIComponent(sessionId) +
+      "/lorebooks",
+    jsonRequest("PUT", { lorebookIds, expectedVersion }),
   );
 }
 
@@ -2407,6 +2704,7 @@ export async function createCoCreateSession(
     directorNote: string | null;
     contextTurns: number;
     participantIds: string[];
+    opening: { personaId: string; greetingIndex: number } | null;
   },
 ): Promise<CoCreateSessionDetail> {
   return requestJson(

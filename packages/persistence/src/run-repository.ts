@@ -359,6 +359,10 @@ export class SqliteRunRepository {
     output: Readonly<Record<string, unknown>>,
     artifactKind: string,
     now: string,
+    additionalArtifacts: readonly {
+      kind: string;
+      output: Readonly<Record<string, unknown>>;
+    }[] = [],
   ): void {
     this.database.transaction(() => {
       const step = this.requireStep(runId, stepId);
@@ -376,30 +380,25 @@ export class SqliteRunRepository {
            WHERE run_id = ? AND id = ?`,
         )
         .run(serialized, outputHash, now, now, runId, stepId);
-      const version = (
-        this.database.raw
-          .prepare(
-            "SELECT COALESCE(MAX(version), 0) + 1 AS version FROM run_artifacts WHERE run_id = ? AND kind = ?",
-          )
-          .get(runId, artifactKind) as { version: number }
-      ).version;
-      const artifactId = randomUuid();
-      this.database.raw
-        .prepare(
-          `INSERT INTO run_artifacts(
-            id, run_id, step_id, kind, version, content_json, content_hash, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          artifactId,
+      const artifactId = this.insertRunArtifact(
+        runId,
+        stepId,
+        artifactKind,
+        serialized,
+        outputHash,
+        now,
+      );
+      const extraArtifactIds = additionalArtifacts.map((artifact) => {
+        const extraSerialized = stableJson(artifact.output);
+        return this.insertRunArtifact(
           runId,
           stepId,
-          artifactKind,
-          version,
-          serialized,
-          outputHash,
+          artifact.kind,
+          extraSerialized,
+          hash(extraSerialized),
           now,
         );
+      });
       this.database.raw
         .prepare(
           `UPDATE runs SET current_step_id = NULL,
@@ -415,6 +414,7 @@ export class SqliteRunRepository {
           artifactId,
           artifactKind,
           outputHash,
+          additionalArtifactIds: extraArtifactIds,
         },
         now,
       );
@@ -427,10 +427,46 @@ export class SqliteRunRepository {
           outputHash,
           artifactId,
           artifactKind,
+          additionalArtifactIds: extraArtifactIds,
         },
         now,
       );
     });
+  }
+
+  private insertRunArtifact(
+    runId: string,
+    stepId: string,
+    kind: string,
+    serialized: string,
+    contentHash: string,
+    now: string,
+  ): string {
+    const version = (
+      this.database.raw
+        .prepare(
+          "SELECT COALESCE(MAX(version), 0) + 1 AS version FROM run_artifacts WHERE run_id = ? AND kind = ?",
+        )
+        .get(runId, kind) as { version: number }
+    ).version;
+    const artifactId = randomUuid();
+    this.database.raw
+      .prepare(
+        `INSERT INTO run_artifacts(
+          id, run_id, step_id, kind, version, content_json, content_hash, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        artifactId,
+        runId,
+        stepId,
+        kind,
+        version,
+        serialized,
+        contentHash,
+        now,
+      );
+    return artifactId;
   }
 
   failStep(

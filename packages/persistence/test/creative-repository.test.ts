@@ -1,4 +1,5 @@
 import {
+  createDefaultPersonaCardProfile,
   createDocument,
   createProject,
   type EditProposal,
@@ -62,6 +63,77 @@ beforeEach(() => {
 afterEach(() => database.close());
 
 describe("SqliteCreativeRepository", () => {
+  it("round-trips portable persona profiles through insert and versioned update", () => {
+    const inserted = creative.insertPersona({
+      ...persona("character", "portable", "沈砚"),
+      profile: {
+        personality: "克制而敏锐",
+        scenario: "退潮后的邮局刚刚显露",
+        exampleDialogue: "{{char}}：潮线不会说谎。",
+        greetings: ["你终于来了。", "潮水比你先到了。"],
+        creator: {
+          name: "测试作者",
+          notes: "安全元数据",
+          version: "1.0",
+          tags: ["mystery"],
+        },
+        source: {
+          format: "character-card-v3",
+          importedAt: now,
+        },
+      },
+    });
+
+    expect(inserted.profile).toEqual({
+      personality: "克制而敏锐",
+      scenario: "退潮后的邮局刚刚显露",
+      exampleDialogue: "{{char}}：潮线不会说谎。",
+      greetings: ["你终于来了。", "潮水比你先到了。"],
+      creator: {
+        name: "测试作者",
+        notes: "安全元数据",
+        version: "1.0",
+        tags: ["mystery"],
+      },
+      source: { format: "character-card-v3", importedAt: now },
+    });
+    expect(
+      JSON.parse(
+        (
+          database.raw
+            .prepare(
+              "SELECT profile_json FROM story_personas WHERE id = 'portable'",
+            )
+            .get() as { profile_json: string }
+        ).profile_json,
+      ),
+    ).toEqual(inserted.profile);
+
+    const updated = creative.updatePersona(inserted.id, {
+      kind: inserted.kind,
+      entityId: inserted.entityId,
+      name: inserted.name,
+      description: inserted.description,
+      instructions: inserted.instructions,
+      voice: inserted.voice,
+      profile: {
+        ...inserted.profile,
+        greetings: ["换一个开场。"],
+        creator: { ...inserted.profile.creator, version: "1.1" },
+      },
+      status: inserted.status,
+      updatedAt: "2026-08-10T01:00:00.000Z",
+      expectedVersion: inserted.version,
+    });
+
+    expect(updated.version).toBe(1);
+    expect(updated.profile.greetings).toEqual(["换一个开场。"]);
+    expect(updated.profile.creator.version).toBe("1.1");
+    expect(creative.requirePersona(inserted.id).profile).toEqual(
+      updated.profile,
+    );
+  });
+
   it("keeps personas, swipes, branches, and turn rollback recoverable", () => {
     creative.insertPersona(persona("author", "author", "作者"));
     creative.insertPersona(persona("narrator", "narrator", "旁白"));
@@ -71,7 +143,7 @@ describe("SqliteCreativeRepository", () => {
       branchId: "main",
       projectId: "project",
       title: "退潮试演",
-      speakerPolicy: "auto",
+      speakerPolicy: "natural",
       targetOutlineNodeId: null,
       authorPersonaId: "author",
       directorNote: "保持克制",
@@ -231,6 +303,7 @@ function persona(
     description: null,
     instructions: "",
     voice: {},
+    profile: createDefaultPersonaCardProfile(),
     status: "active",
     createdAt: now,
     updatedAt: now,

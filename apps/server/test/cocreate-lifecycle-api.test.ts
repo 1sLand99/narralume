@@ -58,7 +58,7 @@ describe("cocreate lifecycle boundary", () => {
         `/api/projects/${project.id}/cocreate/sessions`,
         {
           title: "灯下故事房",
-          speakerPolicy: "auto",
+          speakerPolicy: "natural",
           participantIds: [persona.id],
         },
         201,
@@ -229,7 +229,7 @@ describe("cocreate lifecycle boundary", () => {
       `/api/projects/${project.id}/cocreate/sessions`,
       {
         title: "雨夜故事房",
-        speakerPolicy: "auto",
+        speakerPolicy: "natural",
         targetOutlineNodeId: chapter.id,
         participantIds: [persona.id],
       },

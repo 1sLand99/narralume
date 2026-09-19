@@ -210,6 +210,70 @@ describe("写作台", () => {
     expect(screen.queryByRole("button", { name: /交给 AI/ })).not.toBeInTheDocument();
   });
 
+  it("从当前章节进入故事房时预填试演目标与房间名", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/projects/p-1/studio/documents") return json(DOC_LIST);
+      if (url === "/api/projects/p-1/studio/documents/doc-ch-1")
+        return json(DOC_DETAIL);
+      if (url === "/api/projects/p-1/reviews")
+        return json({ reports: [], proposals: [] });
+      if (url === "/api/projects/p-1/canon-change-sets")
+        return json({ changeSets: [] });
+      if (url === "/api/projects/p-1/personas")
+        return json([
+          {
+            id: "persona-narrator",
+            projectId: "p-1",
+            kind: "narrator",
+            entityId: null,
+            name: "旁白",
+            description: null,
+            instructions: "克制、具体",
+            voice: {},
+            status: "active",
+            createdAt: "2026-08-10T10:00:00.000Z",
+            updatedAt: "2026-08-10T10:00:00.000Z",
+            version: 0,
+          },
+        ]);
+      if (url === "/api/projects/p-1/cocreate/sessions") return json([]);
+      if (url === "/api/projects/p-1/story-bible")
+        return json({
+          outline: [
+            {
+              id: "node-ch-1",
+              projectId: "p-1",
+              parentId: null,
+              kind: "chapter",
+              ordinal: 0,
+              title: "第一章 灯下潮痕",
+              summary: null,
+              goal: null,
+              conflict: null,
+              status: "planned",
+              metadata: {},
+              createdAt: "2026-08-10T10:00:00.000Z",
+              updatedAt: "2026-08-10T10:00:00.000Z",
+            },
+          ],
+        });
+      throw new Error(`unexpected request ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderStudio();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "试演这个场景" }),
+    );
+
+    expect(await screen.findByLabelText("房间名")).toHaveValue(
+      "第一章 灯下潮痕",
+    );
+    expect(screen.getByText("试演目标")).toBeInTheDocument();
+    expect(screen.getAllByText("第一章 灯下潮痕").length).toBeGreaterThan(0);
+  });
+
   it("空章节给出有效的起笔提示，不再显示只聚焦编辑器的按钮", async () => {
     const emptyDetail = {
       ...DOC_DETAIL,

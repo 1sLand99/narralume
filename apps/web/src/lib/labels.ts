@@ -549,12 +549,12 @@ export function documentSourceLabel(source: string): string {
 }
 
 export function speakerPolicyLabel(
-  policy: "manual" | "round_robin" | "auto",
+  policy: "manual" | "round_robin" | "natural",
 ): string {
   const keys: Record<typeof policy, MessageKey> = {
     manual: "labels.speakerPolicy.manual",
     round_robin: "labels.speakerPolicy.roundRobin",
-    auto: "labels.speakerPolicy.auto",
+    natural: "labels.speakerPolicy.natural",
   };
   return translate(getLocale(), keys[policy]);
 }

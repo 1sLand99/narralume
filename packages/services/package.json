@@ -20,7 +20,12 @@
     "@narralume/harness": "0.2.0",
     "@narralume/llm": "0.2.0",
     "@narralume/persistence": "0.2.0",
+    "crc-32": "^1.2.2",
     "jszip": "^3.10.1",
+    "png-chunks-extract": "^1.0.0",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/png-chunks-extract": "^1.0.2"
   }
 }

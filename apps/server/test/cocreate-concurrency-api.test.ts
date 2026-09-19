@@ -65,7 +65,7 @@ describe("cocreate optimistic concurrency (CR-27)", () => {
       `/api/projects/${project.id}/cocreate/sessions`,
       {
         title: "第一现场",
-        speakerPolicy: "auto",
+        speakerPolicy: "natural",
         participantIds: [narrator.id],
       },
     );
@@ -220,6 +220,7 @@ function personaPatch(persona: Persona) {
     description: null,
     instructions: persona.instructions,
     voice: {},
+    profile: persona.profile,
     status: "active",
   };
 }
@@ -274,6 +275,7 @@ interface Persona {
   kind: "author" | "narrator" | "character";
   name: string;
   instructions: string;
+  profile: Record<string, unknown>;
   version: number;
 }
 

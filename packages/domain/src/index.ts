@@ -95,6 +95,8 @@ export * from "./narrative-state.js";
 export * from "./run.js";
 export * from "./automation.js";
 export * from "./collaboration.js";
+export * from "./persona-card.js";
+export * from "./lore.js";
 export * from "./delivery.js";
 export * from "./story.js";
 

@@ -1,4 +1,5 @@
 import type { ModelExecutionPolicy } from "@narralume/contracts";
+import { selectNaturalSpeaker, sha256Hex } from "@narralume/domain";
 import {
   buildSelectionEditRecipe,
   compileCoCreateRecipeTemplate,
@@ -297,6 +298,8 @@ export function createReplyRun(
     targetTurnId: string | null;
     creationRequestId: string;
     creationRequestHash: string;
+    speakerSelectionReason: "explicit" | "mention" | "weighted" | "round_robin";
+    speakerSelectionHash: string;
   },
   environment: Readonly<Record<string, string | undefined>>,
   requestPolicy?: ModelExecutionPolicy,
@@ -328,6 +331,8 @@ export function createReplyRun(
         sessionId: session.id,
         branchId: input.branchId,
         speakerPersonaId: input.speakerPersonaId,
+        speakerSelectionReason: input.speakerSelectionReason,
+        speakerSelectionHash: input.speakerSelectionHash,
         targetTurnId: input.targetTurnId,
         creationRequestId: input.creationRequestId,
         creationRequestHash: input.creationRequestHash,
@@ -399,7 +404,9 @@ export function requireActiveCoCreateParticipants(
     .requireSessionDetail(sessionId)
     .participants.filter(
       (participant) =>
-        participant.enabled && participant.persona.status === "active",
+        participant.enabled &&
+        participant.persona.status === "active" &&
+        participant.persona.kind !== "author",
     );
   if (participants.length === 0) {
     throw new StudioServiceError(
@@ -420,6 +427,91 @@ export function requireActiveCoCreateParticipants(
       422,
     );
   }
+  return participants;
+}
+
+export function resolveCoCreateSpeaker(
+  creative: SqliteCreativeRepository,
+  input: {
+    sessionId: string;
+    branchId: string;
+    requestId: string;
+    requestedPersonaId: string | null;
+    recentAuthorInput: string | null;
+  },
+): {
+  speakerPersonaId: string;
+  reason: "explicit" | "mention" | "weighted" | "round_robin";
+  stableHash: string;
+} {
+  const session = requireActiveCoCreateSession(creative, input.sessionId);
+  const branch = creative.requireBranch(input.branchId);
+  if (branch.sessionId !== session.id) {
+    throw new StudioServiceError(
+      "cocreate.branch.mismatch",
+      "The active branch does not belong to the current story room",
+      422,
+    );
+  }
+  const participants = requireActiveCoCreateParticipants(
+    creative,
+    session.id,
+    input.requestedPersonaId,
+  );
+  const turns = creative.listBranchTurns(branch.id);
+  const previousSpeakerPersonaId =
+    [...turns].reverse().find((turn) => turn.role === "assistant")?.personaId ??
+    null;
+  const seed = [
+    session.id,
+    branch.id,
+    branch.headTurnId,
+    input.requestId,
+  ] as const;
+
+  if (input.requestedPersonaId || session.speakerPolicy === "natural") {
+    return selectNaturalSpeaker({
+      sessionId: session.id,
+      branchId: branch.id,
+      headTurnId: branch.headTurnId,
+      requestId: input.requestId,
+      requestedPersonaId: input.requestedPersonaId,
+      recentAuthorInput: input.recentAuthorInput,
+      previousSpeakerPersonaId,
+      candidates: participants.map((participant) => ({
+        personaId: participant.personaId,
+        name: participant.persona.name,
+        position: participant.position,
+        enabled: participant.enabled,
+        talkativeness: participant.talkativeness,
+      })),
+    });
+  }
+
+  if (session.speakerPolicy === "manual") {
+    throw new StudioServiceError(
+      "cocreate.speaker.required",
+      "The manual speaker policy must specify an enabled Persona",
+      422,
+    );
+  }
+
+  const ordered = participants.toSorted(
+    (left, right) =>
+      left.position - right.position ||
+      left.personaId.localeCompare(right.personaId),
+  );
+  const previousIndex = previousSpeakerPersonaId
+    ? ordered.findIndex(
+        (participant) => participant.personaId === previousSpeakerPersonaId,
+      )
+    : -1;
+  return {
+    speakerPersonaId:
+      ordered[(previousIndex + 1 + ordered.length) % ordered.length]!.personaId,
+    reason: "round_robin",
+    stableHash: sha256Hex(JSON.stringify(seed)),
+  };
 }
 
 function policyString(

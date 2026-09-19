@@ -37,8 +37,8 @@ export class SqliteCreativeRepository {
         .prepare(
           `INSERT INTO story_personas(
             id, project_id, kind, entity_id, name, description, instructions,
-            voice_json, status, created_at, updated_at, version
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            voice_json, profile_json, status, created_at, updated_at, version
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(project_id, name) DO NOTHING`,
         )
         .run(
@@ -50,6 +50,7 @@ export class SqliteCreativeRepository {
           persona.description,
           persona.instructions,
           JSON.stringify(persona.voice),
+          JSON.stringify(persona.profile),
           persona.status,
           persona.createdAt,
           persona.updatedAt,
@@ -75,6 +76,7 @@ export class SqliteCreativeRepository {
       | "description"
       | "instructions"
       | "voice"
+      | "profile"
       | "status"
       | "updatedAt"
     > & { expectedVersion: number },
@@ -107,7 +109,7 @@ export class SqliteCreativeRepository {
       const result = this.database.raw
         .prepare(
           `UPDATE story_personas SET kind = ?, entity_id = ?, name = ?, description = ?,
-            instructions = ?, voice_json = ?, status = ?, updated_at = ?,
+            instructions = ?, voice_json = ?, profile_json = ?, status = ?, updated_at = ?,
             version = version + 1 WHERE id = ? AND version = ?`,
         )
         .run(
@@ -117,6 +119,7 @@ export class SqliteCreativeRepository {
           input.description,
           input.instructions,
           JSON.stringify(input.voice),
+          JSON.stringify(input.profile),
           input.status,
           input.updatedAt,
           id,
@@ -176,12 +179,13 @@ export class SqliteCreativeRepository {
         "Session title",
       );
       if (input.authorPersonaId) {
-        this.assertPersonaProject(input.projectId, input.authorPersonaId);
+        this.assertAuthorPersonaProject(input.projectId, input.authorPersonaId);
       }
       this.assertOutlineNodeProject(input.projectId, input.targetOutlineNodeId);
       const participants = [...new Set(input.participantIds)];
+      this.requireCreationParticipantCount(participants.length);
       for (const personaId of participants) {
-        this.assertPersonaProject(input.projectId, personaId);
+        this.assertAiPersonaProject(input.projectId, personaId);
       }
       this.database.raw
         .prepare(
@@ -257,7 +261,10 @@ export class SqliteCreativeRepository {
       this.requireSessionVersion(current, input.expectedVersion);
       const next = { ...current, ...input };
       if (next.authorPersonaId) {
-        this.assertPersonaProject(current.projectId, next.authorPersonaId);
+        this.assertAuthorPersonaProject(
+          current.projectId,
+          next.authorPersonaId,
+        );
       }
       this.assertOutlineNodeProject(
         current.projectId,
@@ -316,6 +323,7 @@ export class SqliteCreativeRepository {
       const session = this.requireSession(sessionId);
       this.requireSessionVersion(session, expectedVersion);
       const unique = new Set<string>();
+      this.requireEnabledParticipantCount(participants);
       for (const participant of participants) {
         if (unique.has(participant.personaId)) {
           throw new CreativePersistenceError(
@@ -324,7 +332,7 @@ export class SqliteCreativeRepository {
           );
         }
         unique.add(participant.personaId);
-        this.assertPersonaProject(session.projectId, participant.personaId);
+        this.assertAiPersonaProject(session.projectId, participant.personaId);
         if (participant.talkativeness < 0 || participant.talkativeness > 1) {
           throw new CreativePersistenceError(
             "cocreate.talkativeness.invalid",
@@ -531,6 +539,98 @@ export class SqliteCreativeRepository {
         )
         .run(input.now, session.id);
       return this.requireTurn(input.id);
+    });
+  }
+
+  insertOpeningGreeting(input: {
+    turnId: string;
+    swipeIds: readonly string[];
+    sessionId: string;
+    branchId: string;
+    personaId: string;
+    greetings: readonly string[];
+    selectedIndex: number;
+    now: string;
+  }): StoryTurn & { swipes: TurnSwipe[] } {
+    return this.database.transaction(() => {
+      const session = this.requireSession(input.sessionId);
+      const persona = this.requirePersona(input.personaId);
+      const participant = this.listParticipants(session.id).find(
+        ({ personaId }) => personaId === input.personaId,
+      );
+      if (
+        persona.projectId !== session.projectId ||
+        persona.status !== "active" ||
+        persona.kind === "author" ||
+        !participant?.enabled
+      ) {
+        throw new CreativePersistenceError(
+          "cocreate.opening.persona_invalid",
+          "The opening greeting must belong to an enabled AI participant",
+        );
+      }
+      if (
+        input.greetings.length === 0 ||
+        input.greetings.length !== input.swipeIds.length ||
+        input.selectedIndex < 0 ||
+        input.selectedIndex >= input.greetings.length
+      ) {
+        throw new CreativePersistenceError(
+          "cocreate.opening.selection_invalid",
+          "The selected opening greeting does not exist",
+        );
+      }
+      const greetings = input.greetings.map((greeting) =>
+        requireCreativeText(
+          greeting,
+          "cocreate.opening.greeting_empty",
+          "Opening greeting",
+        ),
+      );
+      const metadata = {
+        source: "persona-greeting",
+        selectedGreetingIndex: input.selectedIndex,
+      } as const;
+      const turn = this.insertTurn({
+        id: input.turnId,
+        sessionId: session.id,
+        branchId: input.branchId,
+        role: "assistant",
+        personaId: persona.id,
+        content: greetings[input.selectedIndex]!,
+        sourceRunId: null,
+        metadata,
+        now: input.now,
+      });
+      const insert = this.database.raw.prepare(
+        `INSERT INTO turn_swipes(
+          id, turn_id, ordinal, content, speaker_persona_id, source_run_id,
+          status, metadata_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
+      );
+      greetings.forEach((content, index) => {
+        insert.run(
+          input.swipeIds[index],
+          turn.id,
+          index,
+          content,
+          persona.id,
+          index === input.selectedIndex ? "selected" : "candidate",
+          JSON.stringify({ source: "persona-greeting", greetingIndex: index }),
+          input.now,
+        );
+      });
+      const selectedSwipeId = input.swipeIds[input.selectedIndex]!;
+      this.database.raw
+        .prepare(
+          `UPDATE story_turns SET selected_swipe_id = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(selectedSwipeId, input.now, turn.id);
+      return {
+        ...this.requireTurn(turn.id),
+        swipes: this.listSwipes(turn.id),
+      };
     });
   }
 
@@ -967,6 +1067,58 @@ export class SqliteCreativeRepository {
     }
   }
 
+  private assertAiPersonaProject(projectId: string, personaId: string): void {
+    this.assertPersonaProject(projectId, personaId);
+    if (this.requirePersona(personaId).kind === "author") {
+      throw new CreativePersistenceError(
+        "cocreate.participant.kind.invalid",
+        "An author Persona cannot be enabled as an AI participant",
+      );
+    }
+  }
+
+  private assertAuthorPersonaProject(
+    projectId: string,
+    personaId: string,
+  ): void {
+    this.assertPersonaProject(projectId, personaId);
+    if (this.requirePersona(personaId).kind !== "author") {
+      throw new CreativePersistenceError(
+        "cocreate.author_persona.kind.invalid",
+        "The story room author identity must use an author Persona",
+      );
+    }
+  }
+
+  private requireCreationParticipantCount(count: number): void {
+    if (count < 1 || count > 8) {
+      throw new CreativePersistenceError(
+        "cocreate.participants.count.invalid",
+        "A story room must have between one and eight AI participants",
+      );
+    }
+  }
+
+  private requireEnabledParticipantCount(
+    participants: readonly { enabled: boolean }[],
+  ): void {
+    if (participants.length > 30) {
+      throw new CreativePersistenceError(
+        "cocreate.participants.count.invalid",
+        "A story room cannot retain more than thirty AI participants",
+      );
+    }
+    const enabledCount = participants.filter(
+      (participant) => participant.enabled,
+    ).length;
+    if (enabledCount < 1 || enabledCount > 8) {
+      throw new CreativePersistenceError(
+        "cocreate.participant.enabled_limit_exceeded",
+        "A story room must enable between one and eight AI participants",
+      );
+    }
+  }
+
   private assertOutlineNodeProject(
     projectId: string,
     outlineNodeId: string | null,
@@ -1049,6 +1201,7 @@ interface PersonaRow {
   description: string | null;
   instructions: string;
   voice_json: string;
+  profile_json: string;
   status: StoryPersona["status"];
   created_at: string;
   updated_at: string;
@@ -1180,6 +1333,7 @@ function mapPersona(row: PersonaRow): StoryPersona {
     description: row.description,
     instructions: row.instructions,
     voice: JSON.parse(row.voice_json) as Record<string, unknown>,
+    profile: JSON.parse(row.profile_json) as StoryPersona["profile"],
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

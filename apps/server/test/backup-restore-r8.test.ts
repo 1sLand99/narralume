@@ -263,6 +263,53 @@ describe("project backup fidelity (R8)", () => {
       },
     );
 
+    const lorebook = await request<{ id: string }>(
+      app,
+      "POST",
+      "/api/projects/" + projectId + "/lorebooks",
+      {
+        name: "邮局世界书",
+        description: "恢复后仍应保留作用域绑定。",
+        enabledGlobally: true,
+        scanTurns: 18,
+        enabled: true,
+      },
+    );
+    await request(app, "POST", "/api/lorebooks/" + lorebook.id + "/entries", {
+      title: "灯塔潮汐",
+      content: "灯塔熄灭后的第十三分钟，旧邮局会收到无名信。",
+      keys: ["灯塔", "无名信"],
+      constant: false,
+      priority: 30,
+      enabled: true,
+    });
+    await request(
+      app,
+      "PUT",
+      "/api/personas/" + persona.id + "/lorebooks",
+      { lorebookIds: [lorebook.id], expectedVersion: 0 },
+      200,
+    );
+    const sessionBeforeLoreBinding = await request<{
+      session: { version: number };
+    }>(
+      app,
+      "GET",
+      "/api/cocreate/sessions/" + session.session.id,
+      undefined,
+      200,
+    );
+    await request(
+      app,
+      "PUT",
+      "/api/cocreate/sessions/" + session.session.id + "/lorebooks",
+      {
+        lorebookIds: [lorebook.id],
+        expectedVersion: sessionBeforeLoreBinding.session.version,
+      },
+      200,
+    );
+
     // 助手会话 + 消息（回复在后台推进；备份只关心消息落盘）。
     const conversation = await request<{ id: string }>(
       app,
@@ -304,6 +351,10 @@ describe("project backup fidelity (R8)", () => {
       drafts: 1,
       annotations: 1,
       personas: 1,
+      lorebooks: 1,
+      loreEntries: 1,
+      personaLorebookBindings: 1,
+      sessionLorebookBindings: 1,
       cocreateSessions: 1,
       storyTurns: 2,
       assistantConversations: 1,
@@ -324,6 +375,65 @@ describe("project backup fidelity (R8)", () => {
       if (key === "runs") continue;
       expect(restored.counts[key], `counts.${key}`).toBe(value);
     }
+
+    const restoredLorebooks = await request<
+      Array<{
+        lorebook: { id: string; name: string; scanTurns: number };
+        entries: Array<{ title: string; keys: string[] }>;
+      }>
+    >(
+      app,
+      "GET",
+      "/api/projects/" + restored.projectId + "/lorebooks",
+      undefined,
+      200,
+    );
+    expect(restoredLorebooks).toMatchObject([
+      {
+        lorebook: { name: "邮局世界书", scanTurns: 18 },
+        entries: [{ title: "灯塔潮汐", keys: ["灯塔", "无名信"] }],
+      },
+    ]);
+    const restoredPersonas = await request<Array<{ id: string; name: string }>>(
+      app,
+      "GET",
+      "/api/projects/" + restored.projectId + "/personas",
+      undefined,
+      200,
+    );
+    const restoredRoomList = await request<
+      Array<{ id: string; title: string }>
+    >(
+      app,
+      "GET",
+      "/api/projects/" + restored.projectId + "/cocreate/sessions",
+      undefined,
+      200,
+    );
+    const restoredPersonaBinding = await request<{ lorebookIds: string[] }>(
+      app,
+      "GET",
+      "/api/personas/" +
+        restoredPersonas.find(({ name }) => name === "旁白")!.id +
+        "/lorebooks",
+      undefined,
+      200,
+    );
+    const restoredSessionBinding = await request<{ lorebookIds: string[] }>(
+      app,
+      "GET",
+      "/api/cocreate/sessions/" +
+        restoredRoomList.find(({ title }) => title === "开场 brainstorm")!.id +
+        "/lorebooks",
+      undefined,
+      200,
+    );
+    expect(restoredPersonaBinding.lorebookIds).toEqual([
+      restoredLorebooks[0]!.lorebook.id,
+    ]);
+    expect(restoredSessionBinding.lorebookIds).toEqual([
+      restoredLorebooks[0]!.lorebook.id,
+    ]);
 
     // 关键引用逐项核对。
     const restoredBible = await request<{

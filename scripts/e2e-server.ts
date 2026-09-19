@@ -63,7 +63,7 @@ function scriptedE2eModel(): NarrativeModelClient {
     async text() {
       return fatal();
     },
-    async structured(_run, _step, purpose, request, _contract, validate) {
+    async structured(run, _step, purpose, request, _contract, validate) {
       let value: unknown;
       if (purpose === "project-assistant") {
         const stagesFoundation = JSON.stringify(request).includes("待确认任务");
@@ -97,6 +97,23 @@ function scriptedE2eModel(): NarrativeModelClient {
               }),
             },
           ],
+        };
+      } else if (purpose === "cocreate-response") {
+        const speakerPersonaId = String(run.policy.speakerPersonaId ?? "");
+        if (!speakerPersonaId) {
+          throw new Error("The E2E room run did not resolve a speaker.");
+        }
+        const receivedLore = JSON.stringify(request).includes(
+          "E2E_WORLD_LORE_SENTINEL",
+        );
+        value = {
+          speakerPersonaId,
+          content: receivedLore
+            ? "她把灯芯压低，信纸随即析出一圈细盐。"
+            : "她看着信纸，没有发现新的变化。",
+          intent: "让背景规则通过可观察动作显现",
+          emotionalShift: "试探转为确信",
+          suggestedCanonFacts: [],
         };
       } else {
         return fatal();

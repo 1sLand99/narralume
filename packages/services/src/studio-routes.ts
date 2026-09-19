@@ -2,21 +2,35 @@ import { randomUuid } from "@narralume/domain";
 
 import {
   BackgroundRunCreatedSchema,
+  CharacterCardV3ExportSchema,
   CoCreateSessionDetailSchema,
   CoCreateSessionSchema,
   CreateBranchRequestSchema,
   CreateCoCreateSessionRequestSchema,
   CreateDocumentCommentRequestSchema,
+  CreateLorebookRequestSchema,
+  CreateLoreEntryRequestSchema,
   CreatePersonaRequestSchema,
   CreateSceneAdoptionRequestSchema,
   CreateSelectionEditRequestSchema,
   CreateStoryTurnRequestSchema,
   CreativeRunCreatedSchema,
   DecideEditProposalRequestSchema,
+  DeleteLorebookRequestSchema,
+  DeleteLoreEntryRequestSchema,
   DocumentCommentSchema,
   EditProposalSchema,
   GenerateSwipeRequestSchema,
+  ImportPersonaCardJsonRequestSchema,
+  ImportPersonaCardPngRequestSchema,
+  LorebookBindingStateSchema,
+  LorebookDetailSchema,
+  LorebookSchema,
+  LoreEntrySchema,
   NarrativeRunSchema,
+  PERSONA_CARD_LIMITS,
+  PersonaCardImportResponseSchema,
+  ReplaceLorebookBindingsRequestSchema,
   ReplaceParticipantsRequestSchema,
   RevertTurnRequestSchema,
   SaveDocumentDraftRequestSchema,
@@ -29,7 +43,12 @@ import {
   StudioDocumentDetailSchema,
   UpdateCoCreateSessionRequestSchema,
   UpdateDocumentCommentRequestSchema,
+  UpdateLorebookRequestSchema,
+  UpdateLoreEntryRequestSchema,
   UpdatePersonaRequestSchema,
+  type PersonaCardImportReport,
+  type PersonaCardImportTarget,
+  type CharacterCardV3Lorebook,
 } from "@narralume/contracts";
 import type { StoryPersona } from "@narralume/domain";
 import { buildSceneAdoptionRecipe } from "@narralume/harness";
@@ -37,6 +56,7 @@ import {
   CreativePersistenceError,
   SqliteCreativeRepository,
   SqliteDocumentRepository,
+  SqliteLoreRepository,
   SqliteProjectRepository,
   SqliteRequestReplayRepository,
   SqliteRunRepository,
@@ -50,12 +70,19 @@ import {
   cancelRunsInvalidatedByRevert,
   createReplyRun,
   createSelectionEditRun,
+  decodePersonaCardBase64,
   deterministicRequestId,
   hashRequest,
-  requireActiveCoCreateParticipants,
+  exportCharacterCardV3,
+  extractCcv3Base64FromPng,
+  parseCharacterCardV3,
+  parsePersonaCardJsonBytes,
+  PersonaCardFileError,
+  PersonaCardPngError,
   requireActiveCoCreateSession,
   requireProject as requireStudioProject,
   requireWritingAssignment,
+  resolveCoCreateSpeaker,
   runProductProjection,
   withRuntimeModelPolicy,
 } from "@narralume/services";
@@ -64,6 +91,12 @@ import { StudioRouteError } from "./route-error.js";
 const ProjectParamsSchema = z.object({ projectId: z.string().trim().min(1) });
 const PersonaParamsSchema = z.object({ personaId: z.string().trim().min(1) });
 const SessionParamsSchema = z.object({ sessionId: z.string().trim().min(1) });
+const LorebookParamsSchema = z.object({
+  lorebookId: z.string().trim().min(1),
+});
+const LoreEntryParamsSchema = z.object({
+  entryId: z.string().trim().min(1),
+});
 const TurnParamsSchema = z.object({ turnId: z.string().trim().min(1) });
 const DocumentParamsSchema = z.object({
   projectId: z.string().trim().min(1),
@@ -74,6 +107,19 @@ const ProposalParamsSchema = z.object({ proposalId: z.string().trim().min(1) });
 const StudioDocumentQuerySchema = z.object({
   includeArchived: z.coerce.boolean().default(false),
 });
+
+function requirePersonaCardExtension(
+  filename: string,
+  extensions: readonly string[],
+): void {
+  const normalized = filename.trim().toLocaleLowerCase("en-US");
+  if (extensions.some((extension) => normalized.endsWith(extension))) return;
+  throw new StudioRouteError(
+    "persona_card.file.extension_invalid",
+    `Expected a ${extensions.join(" or ")} character card file`,
+    422,
+  );
+}
 
 export function registerStudioRoutes(
   app: RouteApp,
@@ -86,9 +132,192 @@ export function registerStudioRoutes(
 ): void {
   const creative = new SqliteCreativeRepository(database);
   const documents = new SqliteDocumentRepository(database);
+  const lore = new SqliteLoreRepository(database);
   const projects = new SqliteProjectRepository(database);
   const runs = new SqliteRunRepository(database);
   const requestReplays = new SqliteRequestReplayRepository(database);
+
+  const importCharacterBook = (
+    persona: StoryPersona,
+    characterBook: CharacterCardV3Lorebook,
+    now: string,
+  ): StoryPersona => {
+    const lorebook = lore.insertLorebook({
+      id: randomUuid(),
+      projectId: persona.projectId,
+      name: characterBook.name?.trim() || `${persona.name} · Character Book`,
+      description: characterBook.description?.trim() || null,
+      enabledGlobally: false,
+      scanTurns: Math.min(200, Math.floor(characterBook.scan_depth ?? 24)),
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      version: 0,
+    });
+    const usedTitles = new Set<string>();
+    characterBook.entries.forEach((entry, index) => {
+      if (
+        entry.use_regex ||
+        entry.selective ||
+        (entry.secondary_keys?.length ?? 0) > 0 ||
+        !entry.content.trim()
+      ) {
+        return;
+      }
+      const keys = uniqueLoreKeys(entry.keys);
+      const constant = entry.constant === true;
+      if (!constant && keys.length === 0) return;
+      lore.insertLoreEntry({
+        id: randomUuid(),
+        lorebookId: lorebook.id,
+        title: uniqueLoreEntryTitle(
+          entry.name?.trim() || entry.comment?.trim() || `Entry ${index + 1}`,
+          usedTitles,
+        ),
+        content: entry.content,
+        keys,
+        constant,
+        priority: Math.max(
+          -1_000_000,
+          Math.min(
+            1_000_000,
+            Math.trunc(entry.priority ?? entry.insertion_order),
+          ),
+        ),
+        enabled: entry.enabled,
+        createdAt: now,
+        updatedAt: now,
+        version: 0,
+      });
+    });
+    const bindingIds = [
+      ...lore.listPersonaLorebooks(persona.id).map(({ id }) => id),
+      lorebook.id,
+    ];
+    lore.replacePersonaLorebooks(persona.id, bindingIds, persona.version, now);
+    return creative.requirePersona(persona.id);
+  };
+
+  const importPersonaCard = (args: {
+    projectId: string;
+    input: {
+      requestId: string;
+      filename: string;
+      contentBase64: string;
+      target: PersonaCardImportTarget;
+    };
+    sourceFormat: "character-card-v3-json" | "character-card-v3-png";
+    read: () => unknown;
+  }) =>
+    database.transaction(() => {
+      const scope = `persona-card:${args.projectId}:import`;
+      const requestHash = hashRequest({
+        sourceFormat: args.sourceFormat,
+        filename: args.input.filename,
+        target: args.input.target,
+        contentBase64: args.input.contentBase64,
+      });
+      const replay = requestReplays.get<{
+        persona: StoryPersona;
+        report: PersonaCardImportReport;
+      }>(scope, args.input.requestId);
+      if (replay) {
+        if (replay.requestHash !== requestHash) {
+          throw new StudioRouteError(
+            "persona_card.import.idempotency_conflict",
+            "The same requestId was already used for a different character card import",
+            409,
+          );
+        }
+        return PersonaCardImportResponseSchema.parse({
+          ...replay.result,
+          idempotentReplay: true,
+        });
+      }
+
+      let raw: unknown;
+      try {
+        raw = args.read();
+      } catch (error) {
+        if (
+          error instanceof PersonaCardFileError ||
+          error instanceof PersonaCardPngError
+        ) {
+          throw new StudioRouteError(error.code, error.message, 422);
+        }
+        throw error;
+      }
+      const now = new Date().toISOString();
+      const imported = parseCharacterCardV3(raw, {
+        sourceFormat: args.sourceFormat,
+        importedAt: now,
+      });
+      const name = args.input.target.nameOverride ?? imported.name;
+      let persona: StoryPersona;
+      if (args.input.target.mode === "create") {
+        persona = creative.insertPersona({
+          id: randomUuid(),
+          projectId: args.projectId,
+          kind: args.input.target.kind,
+          entityId: args.input.target.entityId,
+          name,
+          description: imported.description,
+          instructions: "",
+          voice: {},
+          profile: imported.profile,
+          status: "active",
+          createdAt: now,
+          updatedAt: now,
+          version: 0,
+        });
+      } else {
+        const current = creative.requirePersona(args.input.target.personaId);
+        if (current.projectId !== args.projectId) {
+          throw new StudioRouteError(
+            "persona_card.target.mismatch",
+            "The replacement target does not belong to this project",
+            422,
+          );
+        }
+        if (current.kind === "author") {
+          throw new StudioRouteError(
+            "persona_card.kind_invalid",
+            "An author identity cannot be replaced with a character card",
+            422,
+          );
+        }
+        persona = creative.updatePersona(current.id, {
+          kind: current.kind,
+          entityId:
+            args.input.target.entityId === undefined
+              ? current.entityId
+              : args.input.target.entityId,
+          name,
+          description: imported.description,
+          instructions: current.instructions,
+          voice: current.voice,
+          profile: imported.profile,
+          status: current.status,
+          expectedVersion: args.input.target.expectedVersion,
+          updatedAt: now,
+        });
+      }
+      if (imported.characterBook) {
+        persona = importCharacterBook(persona, imported.characterBook, now);
+      }
+      const result = { persona, report: imported.report };
+      requestReplays.insert({
+        scope,
+        requestId: args.input.requestId,
+        requestHash,
+        result,
+        createdAt: now,
+      });
+      return PersonaCardImportResponseSchema.parse({
+        ...result,
+        idempotentReplay: false,
+      });
+    });
 
   app.route("GET", "/api/projects/:projectId/personas", async (request) => {
     const { projectId } = ProjectParamsSchema.parse(request.params);
@@ -130,6 +359,228 @@ export function registerStudioRoutes(
   });
 
   app.route(
+    "POST",
+    "/api/projects/:projectId/persona-card-imports/json",
+    async (request) => {
+      const { projectId } = ProjectParamsSchema.parse(request.params);
+      requireStudioProject(projects, projectId);
+      const input = ImportPersonaCardJsonRequestSchema.parse(request.body);
+      requirePersonaCardExtension(input.filename, [".json"]);
+      return {
+        status: 201,
+        body: importPersonaCard({
+          projectId,
+          input,
+          sourceFormat: "character-card-v3-json",
+          read: () =>
+            parsePersonaCardJsonBytes(
+              decodePersonaCardBase64(
+                input.contentBase64,
+                PERSONA_CARD_LIMITS.jsonBytes,
+              ),
+            ),
+        }),
+      };
+    },
+    { bodyLimit: 3_000_000 },
+  );
+
+  app.route(
+    "POST",
+    "/api/projects/:projectId/persona-card-imports/png",
+    async (request) => {
+      const { projectId } = ProjectParamsSchema.parse(request.params);
+      requireStudioProject(projects, projectId);
+      const input = ImportPersonaCardPngRequestSchema.parse(request.body);
+      requirePersonaCardExtension(input.filename, [".png", ".apng"]);
+      return {
+        status: 201,
+        body: importPersonaCard({
+          projectId,
+          input,
+          sourceFormat: "character-card-v3-png",
+          read: () => {
+            const png = decodePersonaCardBase64(
+              input.contentBase64,
+              PERSONA_CARD_LIMITS.pngBytes,
+            );
+            const encodedJson = extractCcv3Base64FromPng(png);
+            return parsePersonaCardJsonBytes(
+              decodePersonaCardBase64(
+                encodedJson,
+                PERSONA_CARD_LIMITS.jsonBytes,
+              ),
+            );
+          },
+        }),
+      };
+    },
+    { bodyLimit: 15_000_000 },
+  );
+
+  app.route("GET", "/api/personas/:personaId/card", async (request) => {
+    const { personaId } = PersonaParamsSchema.parse(request.params);
+    const persona = creative.requirePersona(personaId);
+    if (persona.kind === "author") {
+      throw new StudioRouteError(
+        "persona_card.kind_invalid",
+        "An author identity cannot be exported as a character card",
+        422,
+      );
+    }
+    return {
+      status: 200,
+      body: CharacterCardV3ExportSchema.parse(exportCharacterCardV3(persona)),
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`${persona.name}.json`)}`,
+      },
+    };
+  });
+
+  app.route("GET", "/api/projects/:projectId/lorebooks", async (request) => {
+    const { projectId } = ProjectParamsSchema.parse(request.params);
+    requireStudioProject(projects, projectId);
+    return lore
+      .listLorebooks(projectId)
+      .map(({ id }) =>
+        LorebookDetailSchema.parse(lore.requireLorebookDetail(id)),
+      );
+  });
+
+  app.route("POST", "/api/projects/:projectId/lorebooks", async (request) => {
+    const { projectId } = ProjectParamsSchema.parse(request.params);
+    requireStudioProject(projects, projectId);
+    const input = CreateLorebookRequestSchema.parse(request.body);
+    const now = new Date().toISOString();
+    return {
+      status: 201,
+      body: LorebookSchema.parse(
+        lore.insertLorebook({
+          id: randomUuid(),
+          projectId,
+          ...input,
+          createdAt: now,
+          updatedAt: now,
+          version: 0,
+        }),
+      ),
+    };
+  });
+
+  app.route("PUT", "/api/lorebooks/:lorebookId", async (request) => {
+    const { lorebookId } = LorebookParamsSchema.parse(request.params);
+    const input = UpdateLorebookRequestSchema.parse(request.body);
+    return LorebookSchema.parse(
+      lore.updateLorebook(lorebookId, {
+        ...input,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+  });
+
+  app.route("DELETE", "/api/lorebooks/:lorebookId", async (request) => {
+    const { lorebookId } = LorebookParamsSchema.parse(request.params);
+    const input = DeleteLorebookRequestSchema.parse(request.body);
+    lore.deleteLorebook(lorebookId, input.expectedVersion);
+    return { deleted: true };
+  });
+
+  app.route("POST", "/api/lorebooks/:lorebookId/entries", async (request) => {
+    const { lorebookId } = LorebookParamsSchema.parse(request.params);
+    const input = CreateLoreEntryRequestSchema.parse(request.body);
+    const now = new Date().toISOString();
+    return {
+      status: 201,
+      body: LoreEntrySchema.parse(
+        lore.insertLoreEntry({
+          id: randomUuid(),
+          lorebookId,
+          ...input,
+          createdAt: now,
+          updatedAt: now,
+          version: 0,
+        }),
+      ),
+    };
+  });
+
+  app.route("PUT", "/api/lore-entries/:entryId", async (request) => {
+    const { entryId } = LoreEntryParamsSchema.parse(request.params);
+    const input = UpdateLoreEntryRequestSchema.parse(request.body);
+    return LoreEntrySchema.parse(
+      lore.updateLoreEntry(entryId, {
+        ...input,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+  });
+
+  app.route("DELETE", "/api/lore-entries/:entryId", async (request) => {
+    const { entryId } = LoreEntryParamsSchema.parse(request.params);
+    const input = DeleteLoreEntryRequestSchema.parse(request.body);
+    lore.deleteLoreEntry(entryId, input.expectedVersion);
+    return { deleted: true };
+  });
+
+  app.route("GET", "/api/personas/:personaId/lorebooks", async (request) => {
+    const { personaId } = PersonaParamsSchema.parse(request.params);
+    const persona = creative.requirePersona(personaId);
+    return LorebookBindingStateSchema.parse({
+      targetId: persona.id,
+      lorebookIds: lore.listPersonaLorebooks(persona.id).map(({ id }) => id),
+      version: persona.version,
+      updatedAt: persona.updatedAt,
+    });
+  });
+
+  app.route("PUT", "/api/personas/:personaId/lorebooks", async (request) => {
+    const { personaId } = PersonaParamsSchema.parse(request.params);
+    const input = ReplaceLorebookBindingsRequestSchema.parse(request.body);
+    return LorebookBindingStateSchema.parse(
+      lore.replacePersonaLorebooks(
+        personaId,
+        input.lorebookIds,
+        input.expectedVersion,
+        new Date().toISOString(),
+      ),
+    );
+  });
+
+  app.route(
+    "GET",
+    "/api/cocreate/sessions/:sessionId/lorebooks",
+    async (request) => {
+      const { sessionId } = SessionParamsSchema.parse(request.params);
+      const session = creative.requireSession(sessionId);
+      return LorebookBindingStateSchema.parse({
+        targetId: session.id,
+        lorebookIds: lore.listSessionLorebooks(session.id).map(({ id }) => id),
+        version: session.version,
+        updatedAt: session.updatedAt,
+      });
+    },
+  );
+
+  app.route(
+    "PUT",
+    "/api/cocreate/sessions/:sessionId/lorebooks",
+    async (request) => {
+      const { sessionId } = SessionParamsSchema.parse(request.params);
+      const input = ReplaceLorebookBindingsRequestSchema.parse(request.body);
+      requireActiveCoCreateSession(creative, sessionId);
+      return LorebookBindingStateSchema.parse(
+        lore.replaceSessionLorebooks(
+          sessionId,
+          input.lorebookIds,
+          input.expectedVersion,
+          new Date().toISOString(),
+        ),
+      );
+    },
+  );
+
+  app.route(
     "GET",
     "/api/projects/:projectId/cocreate/sessions",
     async (request) => {
@@ -148,29 +599,57 @@ export function registerStudioRoutes(
       const { projectId } = ProjectParamsSchema.parse(request.params);
       requireStudioProject(projects, projectId);
       const input = CreateCoCreateSessionRequestSchema.parse(request.body);
-      if (
-        input.speakerPolicy === "manual" &&
-        input.participantIds.length === 0
-      ) {
+      if (input.participantIds.length === 0) {
         throw new StudioRouteError(
           "cocreate.participants.required",
-          "The manual speaker policy requires at least one participant",
+          "A story room requires at least one AI participant",
           422,
         );
       }
       requireWritingAssignment(database, options.environment);
-      const detail = creative.createSession({
-        id: randomUuid(),
-        branchId: randomUuid(),
-        projectId,
-        title: input.title,
-        speakerPolicy: input.speakerPolicy,
-        targetOutlineNodeId: input.targetOutlineNodeId,
-        authorPersonaId: input.authorPersonaId,
-        directorNote: input.directorNote,
-        contextTurns: input.contextTurns,
-        participantIds: input.participantIds,
-        now: new Date().toISOString(),
+      const detail = database.transaction(() => {
+        const now = new Date().toISOString();
+        const created = creative.createSession({
+          id: randomUuid(),
+          branchId: randomUuid(),
+          projectId,
+          title: input.title,
+          speakerPolicy: input.speakerPolicy,
+          targetOutlineNodeId: input.targetOutlineNodeId,
+          authorPersonaId: input.authorPersonaId,
+          directorNote: input.directorNote,
+          contextTurns: input.contextTurns,
+          participantIds: input.participantIds,
+          now,
+        });
+        if (input.opening) {
+          const persona = creative.requirePersona(input.opening.personaId);
+          if (!input.participantIds.includes(persona.id)) {
+            throw new StudioRouteError(
+              "cocreate.opening.persona_invalid",
+              "The opening greeting must belong to a selected AI participant",
+              422,
+            );
+          }
+          if (!persona.profile.greetings[input.opening.greetingIndex]) {
+            throw new StudioRouteError(
+              "cocreate.opening.selection_invalid",
+              "The selected opening greeting does not exist",
+              422,
+            );
+          }
+          creative.insertOpeningGreeting({
+            turnId: randomUuid(),
+            swipeIds: persona.profile.greetings.map(() => randomUuid()),
+            sessionId: created.session.id,
+            branchId: created.session.activeBranchId!,
+            personaId: persona.id,
+            greetings: persona.profile.greetings,
+            selectedIndex: input.opening.greetingIndex,
+            now,
+          });
+        }
+        return creative.requireSessionDetail(created.session.id);
       });
       return { status: 201, body: CoCreateSessionDetailSchema.parse(detail) };
     },
@@ -283,24 +762,14 @@ export function registerStudioRoutes(
           409,
         );
       }
-      if (
-        input.generateReply &&
-        session.speakerPolicy === "manual" &&
-        !input.speakerPersonaId
-      ) {
-        throw new StudioRouteError(
-          "cocreate.speaker.required",
-          "The manual speaker policy must specify an enabled Persona",
-          422,
-        );
-      }
       if (!input.generateReply) {
         const turn = creative.insertTurn({
           id: turnId,
           sessionId,
           branchId: session.activeBranchId,
           role: input.role,
-          personaId: input.personaId,
+          personaId:
+            input.role === "user" ? session.authorPersonaId : input.personaId,
           content: input.content,
           metadata: {
             creationRequestId: input.requestId,
@@ -322,18 +791,21 @@ export function registerStudioRoutes(
         input.requestId,
       );
       const { turn, snapshot } = database.transaction(() => {
-        requireActiveCoCreateParticipants(
-          creative,
-          session.id,
-          input.speakerPersonaId,
-        );
+        const selection = resolveCoCreateSpeaker(creative, {
+          sessionId: session.id,
+          branchId: session.activeBranchId!,
+          requestId: input.requestId,
+          requestedPersonaId: input.speakerPersonaId,
+          recentAuthorInput: input.content,
+        });
         requireWritingAssignment(database, options.environment);
         const turn = creative.insertTurn({
           id: turnId,
           sessionId,
           branchId: session.activeBranchId!,
           role: input.role,
-          personaId: input.personaId,
+          personaId:
+            input.role === "user" ? session.authorPersonaId : input.personaId,
           content: input.content,
           metadata: {
             creationRequestId: input.requestId,
@@ -347,7 +819,9 @@ export function registerStudioRoutes(
           {
             runId,
             branchId: session.activeBranchId!,
-            speakerPersonaId: input.speakerPersonaId,
+            speakerPersonaId: selection.speakerPersonaId,
+            speakerSelectionReason: selection.reason,
+            speakerSelectionHash: selection.stableHash,
             targetTurnId: null,
             creationRequestId: input.requestId,
             creationRequestHash: requestHash,
@@ -405,11 +879,17 @@ export function registerStudioRoutes(
         );
       }
       const session = requireActiveCoCreateSession(creative, turn.sessionId);
-      requireActiveCoCreateParticipants(
-        creative,
-        session.id,
-        input.speakerPersonaId,
-      );
+      const visibleTurns = creative.listBranchTurns(turn.branchId);
+      const selection = resolveCoCreateSpeaker(creative, {
+        sessionId: session.id,
+        branchId: turn.branchId,
+        requestId: input.requestId,
+        requestedPersonaId: input.speakerPersonaId ?? turn.personaId,
+        recentAuthorInput:
+          [...visibleTurns]
+            .reverse()
+            .find((candidate) => candidate.role === "user")?.content ?? null,
+      });
       requireWritingAssignment(database, options.environment);
       return createReplyRun(
         database,
@@ -417,7 +897,9 @@ export function registerStudioRoutes(
         {
           runId,
           branchId: turn.branchId,
-          speakerPersonaId: input.speakerPersonaId,
+          speakerPersonaId: selection.speakerPersonaId,
+          speakerSelectionReason: selection.reason,
+          speakerSelectionHash: selection.stableHash,
           targetTurnId: turn.id,
           creationRequestId: input.requestId,
           creationRequestHash: requestHash,
@@ -901,6 +1383,35 @@ export function registerStudioRoutes(
   );
 
   void CreativePersistenceError;
+}
+
+function uniqueLoreKeys(keys: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const key of keys) {
+    const trimmed = key.trim();
+    const normalized = trimmed.normalize("NFKC").toLowerCase();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+function uniqueLoreEntryTitle(
+  requested: string,
+  usedTitles: Set<string>,
+): string {
+  const base = requested.slice(0, 300) || "Entry";
+  let title = base;
+  let suffix = 2;
+  while (usedTitles.has(title.normalize("NFKC").toLowerCase())) {
+    const marker = ` (${suffix})`;
+    title = `${base.slice(0, 300 - marker.length)}${marker}`;
+    suffix += 1;
+  }
+  usedTitles.add(title.normalize("NFKC").toLowerCase());
+  return title;
 }
 
 function wake(options: {

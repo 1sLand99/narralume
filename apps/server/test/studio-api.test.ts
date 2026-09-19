@@ -1,4 +1,5 @@
 import type { NarrativeModelClient } from "@narralume/narrative";
+import { SqliteRunRepository } from "@narralume/persistence";
 import { NodeNarrativeDatabase } from "@narralume/persistence/node";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -65,7 +66,60 @@ describe("studio API", () => {
       kind: "narrator",
       name: "潮声旁白",
       instructions: "克制、具体，不替角色解释情绪",
+      profile: {
+        personality: "擅长从潮汐与实物变化观察人物。",
+        scenario: "邮局正处在第一次退潮的夜里。",
+        exampleDialogue: "灯芯向海的方向偏了偏。",
+        greetings: [],
+        creator: {
+          name: "CREATOR_METADATA_MUST_NOT_ENTER_PROMPT",
+          notes: "CREATOR_NOTES_MUST_NOT_ENTER_PROMPT",
+          version: "1.0",
+          tags: ["旁白"],
+        },
+        source: { format: "native", importedAt: null },
+      },
     });
+    const observer = await createPersona(app, project.id, {
+      kind: "character",
+      name: "守灯人",
+      description: "只在门外观察潮汐。",
+      instructions: "OTHER_PERSONA_PRIVATE_INSTRUCTIONS",
+    });
+    const lorebook = await request<{ id: string }>(
+      app,
+      "POST",
+      "/api/projects/" + project.id + "/lorebooks",
+      {
+        name: "潮汐邮局世界书",
+        description: "只在命中时进入共创上下文",
+        enabledGlobally: false,
+        scanTurns: 12,
+        enabled: true,
+      },
+      201,
+    );
+    const loreEntry = await request<{ id: string }>(
+      app,
+      "POST",
+      "/api/lorebooks/" + lorebook.id + "/entries",
+      {
+        title: "煤油灯规则",
+        content: "WORLD_LORE_SENTINEL：煤油灯会让未寄出的信析出盐粒。",
+        keys: ["煤油灯"],
+        constant: false,
+        priority: 80,
+        enabled: true,
+      },
+      201,
+    );
+    await request(
+      app,
+      "PUT",
+      "/api/personas/" + narrator.id + "/lorebooks",
+      { lorebookIds: [lorebook.id], expectedVersion: 0 },
+      200,
+    );
     state.speakerId = narrator.id;
 
     const sessionDetail = await request<SessionDetail>(
@@ -74,9 +128,9 @@ describe("studio API", () => {
       `/api/projects/${project.id}/cocreate/sessions`,
       {
         title: "第一次退潮",
-        speakerPolicy: "auto",
+        speakerPolicy: "natural",
         authorPersonaId: author.id,
-        participantIds: [narrator.id],
+        participantIds: [narrator.id, observer.id],
         directorNote: "让规则通过动作显现。",
       },
       201,
@@ -85,7 +139,7 @@ describe("studio API", () => {
     const mainBranchId = sessionDetail.session.activeBranchId!;
 
     const posted = await request<{
-      turn: { id: string };
+      turn: { id: string; personaId: string | null };
       run: { id: string; policy: Record<string, unknown> };
       origin: { surface: string };
     }>(
@@ -95,8 +149,10 @@ describe("studio API", () => {
       {
         requestId: "turn-main",
         role: "user",
-        personaId: author.id,
-        content: "沈砚把姐姐的空白信放到煤油灯上。",
+        // A caller cannot impersonate another Persona on an author turn: the
+        // room's configured author identity is authoritative.
+        personaId: observer.id,
+        content: "潮声旁白，沈砚把姐姐的空白信放到煤油灯上。",
         generateReply: true,
         policy: { maxRetries: 2, contextWindow: 16_000 },
       },
@@ -107,11 +163,15 @@ describe("studio API", () => {
       maxRetries: 2,
       contextWindow: 16_000,
       qualityPreset: "standard",
+      speakerPersonaId: narrator.id,
+      speakerSelectionReason: "mention",
     });
+    expect(posted.run.policy.speakerSelectionHash).toMatch(/^[a-f0-9]{64}$/u);
+    expect(posted.turn.personaId).toBe(author.id);
     expect(posted.origin).toMatchObject({ surface: "cocreate" });
     const replayedTurn = await request<{
       turn: { id: string };
-      run: { id: string };
+      run: { id: string; policy: Record<string, unknown> };
     }>(
       app,
       "POST",
@@ -119,8 +179,8 @@ describe("studio API", () => {
       {
         requestId: "turn-main",
         role: "user",
-        personaId: author.id,
-        content: "沈砚把姐姐的空白信放到煤油灯上。",
+        personaId: observer.id,
+        content: "潮声旁白，沈砚把姐姐的空白信放到煤油灯上。",
         generateReply: true,
         policy: { maxRetries: 2, contextWindow: 16_000 },
       },
@@ -128,7 +188,14 @@ describe("studio API", () => {
     );
     expect(replayedTurn).toMatchObject({
       turn: { id: posted.turn.id },
-      run: { id: posted.run.id },
+      run: {
+        id: posted.run.id,
+        policy: {
+          speakerPersonaId: narrator.id,
+          speakerSelectionReason: "mention",
+          speakerSelectionHash: posted.run.policy.speakerSelectionHash,
+        },
+      },
     });
     const turnConflict = await app.inject({
       method: "POST",
@@ -145,11 +212,66 @@ describe("studio API", () => {
       error: { code: "cocreate.turn.idempotency_conflict" },
     });
     expect(await finishRun(app, project.id, posted.run.id)).toBe("completed");
+    const contextArtifact = new SqliteRunRepository(database)
+      .getSnapshot(posted.run.id)
+      .steps.find((step) => step.kind === "cocreate.context")?.outputArtifact;
+    expect(contextArtifact).toMatchObject({
+      expectedSpeakerId: narrator.id,
+      speakerSelectionReason: "mention",
+      speakerSelectionHash: posted.run.policy.speakerSelectionHash,
+    });
+    expect(String(contextArtifact?.context)).toContain(
+      "克制、具体，不替角色解释情绪",
+    );
+    expect(String(contextArtifact?.context)).toContain(
+      "擅长从潮汐与实物变化观察人物",
+    );
+    expect(String(contextArtifact?.context)).toContain("灯芯向海的方向偏了偏");
+    expect(String(contextArtifact?.context)).not.toContain(
+      "CREATOR_METADATA_MUST_NOT_ENTER_PROMPT",
+    );
+    expect(String(contextArtifact?.context)).not.toContain(
+      "CREATOR_NOTES_MUST_NOT_ENTER_PROMPT",
+    );
+    expect(String(contextArtifact?.context)).toContain("守灯人");
+    expect(String(contextArtifact?.context)).not.toContain(
+      "OTHER_PERSONA_PRIVATE_INSTRUCTIONS",
+    );
+    expect(String(contextArtifact?.context)).toContain("WORLD_LORE_SENTINEL");
+    expect(contextArtifact?.loreActivation).toMatchObject({
+      includedCount: 1,
+      entries: [
+        {
+          entryId: loreEntry.id,
+          scope: "persona",
+          matchedKeys: ["煤油灯"],
+          contextStatus: "included",
+        },
+      ],
+    });
+    const activationArtifact = database.raw
+      .prepare(
+        "SELECT content_json FROM run_artifacts WHERE run_id = ? AND kind = 'lore-activation'",
+      )
+      .get(posted.run.id) as { content_json: string } | undefined;
+    expect(JSON.parse(activationArtifact?.content_json ?? "{}")).toMatchObject({
+      speakerPersonaId: narrator.id,
+      decisions: [
+        {
+          entryId: loreEntry.id,
+          status: "activated-key",
+          matchedKeys: ["煤油灯"],
+        },
+      ],
+    });
     let room = await getSession(app, sessionId);
     expect(room.turns.map((turn) => turn.role)).toEqual(["user", "assistant"]);
     const assistant = room.turns[1]!;
     expect(assistant.swipes).toHaveLength(1);
     expect(assistant.personaId).toBe(narrator.id);
+    expect(assistant.metadata.loreActivation).toMatchObject({
+      includedCount: 1,
+    });
 
     const swipeRun = await request<{ run: { id: string } }>(
       app,
@@ -591,6 +713,7 @@ interface SessionDetail {
     personaId: string | null;
     status: string;
     selectedSwipeId: string | null;
+    metadata: Record<string, unknown>;
     swipes: { id: string }[];
   }[];
   adoptions: {

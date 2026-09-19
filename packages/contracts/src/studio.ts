@@ -8,6 +8,10 @@ import {
   RunProductResultSchema,
 } from "./run.js";
 import { DocumentSchema, DocumentVersionSchema } from "./story.js";
+import {
+  PersonaCardImportReportSchema,
+  PersonaCardProfileSchema,
+} from "./persona-card.js";
 
 const IdSchema = z.string().trim().min(1).max(300);
 const TimestampSchema = z.string().min(1);
@@ -23,11 +27,19 @@ export const StoryPersonaSchema = z.object({
   description: z.string().nullable(),
   instructions: z.string(),
   voice: JsonObjectSchema,
+  profile: PersonaCardProfileSchema,
   status: z.enum(["active", "retired"]),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
   version: z.number().int().nonnegative(),
 });
+export const PersonaCardImportResponseSchema = z
+  .object({
+    persona: StoryPersonaSchema,
+    report: PersonaCardImportReportSchema,
+    idempotentReplay: z.boolean(),
+  })
+  .strict();
 export const CreatePersonaRequestSchema = z.object({
   kind: PersonaKindSchema,
   entityId: IdSchema.nullable().default(null),
@@ -35,8 +47,17 @@ export const CreatePersonaRequestSchema = z.object({
   description: z.string().trim().max(20_000).nullable().default(null),
   instructions: z.string().trim().max(30_000).default(""),
   voice: JsonObjectSchema.default({}),
+  profile: PersonaCardProfileSchema.default(() => ({
+    personality: null,
+    scenario: null,
+    exampleDialogue: null,
+    greetings: [],
+    creator: { name: null, notes: null, version: null, tags: [] },
+    source: { format: "native" as const, importedAt: null },
+  })),
 });
 export const UpdatePersonaRequestSchema = CreatePersonaRequestSchema.extend({
+  profile: PersonaCardProfileSchema,
   status: z.enum(["active", "retired"]).default("active"),
   expectedVersion: z.number().int().nonnegative(),
 });
@@ -46,7 +67,7 @@ export const CoCreateSessionSchema = z.object({
   projectId: IdSchema,
   title: z.string(),
   status: z.enum(["active", "paused", "archived"]),
-  speakerPolicy: z.enum(["manual", "round_robin", "auto"]),
+  speakerPolicy: z.enum(["manual", "round_robin", "natural"]),
   activeBranchId: IdSchema.nullable(),
   targetOutlineNodeId: IdSchema.nullable(),
   authorPersonaId: IdSchema.nullable(),
@@ -133,15 +154,25 @@ export const CoCreateSessionDetailSchema = z.object({
   adoptions: z.array(SceneAdoptionSchema),
 });
 
+export const CoCreateOpeningSchema = z
+  .object({
+    personaId: IdSchema,
+    greetingIndex: z.number().int().nonnegative(),
+  })
+  .strict();
+
 export const CreateCoCreateSessionRequestSchema = z
   .object({
     title: z.string().trim().min(1).max(300),
-    speakerPolicy: z.enum(["manual", "round_robin", "auto"]).default("auto"),
+    speakerPolicy: z
+      .enum(["manual", "round_robin", "natural"])
+      .default("natural"),
     targetOutlineNodeId: IdSchema.nullable().default(null),
     authorPersonaId: IdSchema.nullable().default(null),
     directorNote: z.string().trim().max(30_000).nullable().default(null),
     contextTurns: z.number().int().min(4).max(200).default(24),
-    participantIds: z.array(IdSchema).max(30).default([]),
+    participantIds: z.array(IdSchema).max(8).default([]),
+    opening: CoCreateOpeningSchema.nullable().default(null),
   })
   .strict();
 
@@ -149,7 +180,7 @@ export const UpdateCoCreateSessionRequestSchema = z
   .object({
     title: z.string().trim().min(1).max(300).optional(),
     status: z.enum(["active", "paused", "archived"]).optional(),
-    speakerPolicy: z.enum(["manual", "round_robin", "auto"]).optional(),
+    speakerPolicy: z.enum(["manual", "round_robin", "natural"]).optional(),
     targetOutlineNodeId: IdSchema.nullable().optional(),
     authorPersonaId: IdSchema.nullable().optional(),
     directorNote: z.string().trim().max(30_000).nullable().optional(),
@@ -158,18 +189,32 @@ export const UpdateCoCreateSessionRequestSchema = z
   })
   .strict();
 
-export const ReplaceParticipantsRequestSchema = z.object({
-  expectedVersion: z.number().int().nonnegative(),
-  participants: z
-    .array(
-      z.object({
-        personaId: IdSchema,
-        enabled: z.boolean().default(true),
-        talkativeness: z.number().min(0).max(1).default(0.5),
-      }),
-    )
-    .max(30),
-});
+export const ReplaceParticipantsRequestSchema = z
+  .object({
+    expectedVersion: z.number().int().nonnegative(),
+    participants: z
+      .array(
+        z.object({
+          personaId: IdSchema,
+          enabled: z.boolean().default(true),
+          talkativeness: z.number().min(0).max(1).default(0.5),
+        }),
+      )
+      .max(30),
+  })
+  .superRefine((value, context) => {
+    const enabledCount = value.participants.filter(
+      (participant) => participant.enabled,
+    ).length;
+    if (enabledCount < 1 || enabledCount > 8) {
+      context.addIssue({
+        code: "custom",
+        path: ["participants"],
+        message:
+          "A story room must enable between one and eight AI participants",
+      });
+    }
+  });
 
 export const CreateStoryTurnRequestSchema = z
   .object({
@@ -305,6 +350,13 @@ export const CreativeRunCreatedSchema = z.object({
 });
 
 export type StoryPersonaDto = z.infer<typeof StoryPersonaSchema>;
+export type PersonaCardImportResponse = z.infer<
+  typeof PersonaCardImportResponseSchema
+>;
+export type CoCreateOpening = z.infer<typeof CoCreateOpeningSchema>;
+export type CreateCoCreateSessionRequest = z.infer<
+  typeof CreateCoCreateSessionRequestSchema
+>;
 export type CoCreateSessionDto = z.infer<typeof CoCreateSessionSchema>;
 export type CoCreateSessionDetailDto = z.infer<
   typeof CoCreateSessionDetailSchema

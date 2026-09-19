@@ -302,7 +302,7 @@ export const labels: typeof labelsZh = {
   speakerPolicy: {
     manual: "Manual picking",
     roundRobin: "Taking turns",
-    auto: "Plot scheduling",
+    natural: "Natural turn-taking",
   },
   personaKind: {
     author: "Author agent",

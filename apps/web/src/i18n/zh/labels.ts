@@ -297,7 +297,7 @@ export const labels = {
   speakerPolicy: {
     manual: "手动点名",
     roundRobin: "依次发言",
-    auto: "剧情调度",
+    natural: "自然接话",
   },
   personaKind: {
     author: "作者代理",

@@ -8,7 +8,10 @@ import type { FastifyInstance } from "fastify";
 
 import { buildApp } from "../apps/server/src/app.js";
 import type { ServerConfig } from "../apps/server/src/config.js";
-import { SqliteLlmCallRepository } from "@narralume/persistence";
+import {
+  SqliteLlmCallRepository,
+  SqliteRunRepository,
+} from "@narralume/persistence";
 import { NodeNarrativeDatabase } from "@narralume/persistence/node";
 
 import {
@@ -58,6 +61,9 @@ interface ResumeState {
   sessionId: string;
   mainBranchId: string;
   assistantTurnId: string;
+  narratorPersonaId: string;
+  lorebookId: string;
+  loreEntryId: string;
   completedRunIds: string[];
   diagnostic: boolean;
   keepArtifacts: boolean;
@@ -140,7 +146,7 @@ async function main() {
       name: "沈砚",
       description: "二十七岁的纸张修复师，谨慎、敏锐，不轻信直觉。",
       instructions:
-        "只根据亲眼所见作判断；先验证再冒险；紧张时会用指腹确认物体边缘。",
+        "NON_SPEAKER_PRIVATE_SMOKE_SENTINEL；只根据亲眼所见作判断；先验证再冒险。",
     });
     const narrator = await createPersona(app, project.id, {
       kind: "narrator",
@@ -148,7 +154,69 @@ async function main() {
       description: "贴近沈砚的有限视角叙述者",
       instructions:
         "使用克制具体的中文；让情绪通过动作和感官显现；不解释主题，不总结场景。",
+      profile: {
+        personality: "SPEAKER_PROFILE_SMOKE_SENTINEL；冷静，重视实物细节。",
+        scenario: "退潮后的煤油灯邮局。",
+        exampleDialogue: "灯芯偏了。她先去看桌上的盐。",
+        greetings: [],
+        creator: {
+          name: "Smoke Fixture",
+          notes: "CREATOR_METADATA_MUST_NOT_ENTER_SMOKE_PROMPT",
+          version: "1",
+          tags: ["smoke"],
+        },
+        source: { format: "native", importedAt: null },
+      },
     });
+    const lorebook = await jsonRequest<{ id: string }>(
+      app,
+      "POST",
+      `/api/projects/${project.id}/lorebooks`,
+      {
+        name: "退潮信件规则",
+        description: "真实模型验收用世界书",
+        enabledGlobally: false,
+        scanTurns: 24,
+        enabled: true,
+      },
+      [201],
+    );
+    const loreEntry = await jsonRequest<{ id: string }>(
+      app,
+      "POST",
+      `/api/lorebooks/${lorebook.id}/entries`,
+      {
+        title: "煤油灯显字规则",
+        content:
+          "WORLD_LORE_SMOKE_SENTINEL：煤油灯照到未寄出的信时，信纸背面会析出三枚盐晶，排成指向寄信人的箭头；这是可复验规则。",
+        keys: ["煤油灯"],
+        constant: false,
+        priority: 80,
+        enabled: true,
+      },
+      [201],
+    );
+    await jsonRequest(
+      app,
+      "POST",
+      `/api/lorebooks/${lorebook.id}/entries`,
+      {
+        title: "鲸骨口哨",
+        content: "UNMATCHED_LORE_MUST_NOT_ENTER_SMOKE_PROMPT",
+        keys: ["鲸骨口哨"],
+        constant: false,
+        priority: 100,
+        enabled: true,
+      },
+      [201],
+    );
+    await jsonRequest(
+      app,
+      "PUT",
+      `/api/personas/${narrator.id}/lorebooks`,
+      { lorebookIds: [lorebook.id], expectedVersion: 0 },
+      [200],
+    );
 
     const session = await jsonRequest<SessionDetail>(
       app,
@@ -160,7 +228,7 @@ async function main() {
         authorPersonaId: author.id,
         participantIds: [narrator.id, investigator.id],
         directorNote:
-          "场景发生在煤油灯下。用纸张、盐粒、潮气建立一条可复验规则，暂不揭示姐姐失踪的真相。",
+          "场景发生在煤油灯下。若世界书命中，用可观察动作呈现其中规则；暂不揭示姐姐失踪的真相。",
         contextTurns: 24,
       },
       [201],
@@ -179,6 +247,7 @@ async function main() {
       "POST",
       `/api/cocreate/sessions/${sessionId}/turns`,
       {
+        requestId: globalThis.crypto.randomUUID(),
         role: "user",
         personaId: author.id,
         content:
@@ -195,6 +264,50 @@ async function main() {
     watcher.track(posted.run.id);
     await finishRun(app, watcher, posted.run.id, project.id, "room reply");
     const completedRunIds: string[] = [posted.run.id];
+    const contextArtifact = new SqliteRunRepository(database)
+      .getSnapshot(posted.run.id)
+      .steps.find((step) => step.kind === "cocreate.context")?.outputArtifact;
+    const compiledContext = String(contextArtifact?.context ?? "");
+    if (!compiledContext.includes("SPEAKER_PROFILE_SMOKE_SENTINEL")) {
+      throw new Error("selected speaker profile did not enter room context");
+    }
+    if (compiledContext.includes("NON_SPEAKER_PRIVATE_SMOKE_SENTINEL")) {
+      throw new Error(
+        "non-speaker private instructions leaked into room context",
+      );
+    }
+    if (
+      compiledContext.includes("CREATOR_METADATA_MUST_NOT_ENTER_SMOKE_PROMPT")
+    ) {
+      throw new Error("persona creator metadata leaked into room context");
+    }
+    recordCheck("selected speaker profile is isolated", true);
+    if (!compiledContext.includes("WORLD_LORE_SMOKE_SENTINEL")) {
+      throw new Error("matched lore did not enter room context");
+    }
+    if (
+      compiledContext.includes("UNMATCHED_LORE_MUST_NOT_ENTER_SMOKE_PROMPT")
+    ) {
+      throw new Error("unmatched lore entered room context");
+    }
+    const activationArtifact = database.raw
+      .prepare(
+        "SELECT content_json FROM run_artifacts WHERE run_id = ? AND kind = 'lore-activation'",
+      )
+      .get(posted.run.id) as { content_json: string } | undefined;
+    const activation = JSON.parse(activationArtifact?.content_json ?? "{}") as {
+      decisions?: { entryId?: string; status?: string }[];
+    };
+    if (
+      !activation.decisions?.some(
+        (decision) =>
+          decision.entryId === loreEntry.id &&
+          decision.status === "activated-key",
+      )
+    ) {
+      throw new Error("lore activation artifact did not explain the key match");
+    }
+    recordCheck("matched lore is isolated and explained", true);
     let room = await getRoom(app, sessionId);
     const assistant = required(
       room.turns.find((turn) => turn.role === "assistant"),
@@ -202,6 +315,12 @@ async function main() {
     );
     if (assistant.personaId !== narrator.id) {
       throw new Error("round-robin did not select the first enabled persona");
+    }
+    if (
+      !/三[枚颗]|箭头|指向/u.test(assistant.content) ||
+      !/盐/u.test(assistant.content)
+    ) {
+      throw new Error("real model reply did not apply the activated lore rule");
     }
     process.stdout.write(
       `room reply: ${assistant.swipes.length} selected swipe, ${assistant.content.length} chars\n`,
@@ -212,7 +331,10 @@ async function main() {
       app,
       "POST",
       `/api/turns/${assistant.id}/swipes`,
-      { speakerPersonaId: investigator.id },
+      {
+        requestId: globalThis.crypto.randomUUID(),
+        speakerPersonaId: investigator.id,
+      },
       [202],
     );
     logger.event("run.created", {
@@ -250,25 +372,32 @@ async function main() {
       app,
       "POST",
       `/api/cocreate/sessions/${sessionId}/branches`,
-      { fromTurnId: posted.turn.id, name: "先拆信封" },
+      {
+        fromTurnId: posted.turn.id,
+        name: "先拆信封",
+        expectedVersion: room.session.version,
+      },
       [201],
     );
+    room = await getRoom(app, sessionId);
     await jsonRequest(
       app,
       "POST",
       `/api/cocreate/sessions/${sessionId}/turns`,
       {
+        requestId: globalThis.crypto.randomUUID(),
         role: "director",
         content: "让沈砚先检查信封胶痕，不要加热信纸。",
         generateReply: false,
       },
       [201],
     );
+    room = await getRoom(app, sessionId);
     await jsonRequest(
       app,
       "POST",
       `/api/cocreate/sessions/${sessionId}/branch-selection`,
-      { branchId: mainBranchId },
+      { branchId: mainBranchId, expectedVersion: room.session.version },
       [200],
     );
     process.stdout.write(`branch: fork ${shortId(branch.id)} preserved\n`);
@@ -281,6 +410,9 @@ async function main() {
       sessionId,
       mainBranchId,
       assistantTurnId: assistant.id,
+      narratorPersonaId: narrator.id,
+      lorebookId: lorebook.id,
+      loreEntryId: loreEntry.id,
       completedRunIds,
       diagnostic: args.diagnostic,
       keepArtifacts: args.keepArtifacts,
@@ -426,12 +558,45 @@ async function resumeMain(resumeFrom: string) {
       true,
       `${room.turns.length} turns, ${room.branches.length} branches`,
     );
+    const restoredLorebooks = await jsonRequest<
+      { lorebook: { id: string }; entries: { id: string }[] }[]
+    >(
+      app,
+      "GET",
+      `/api/projects/${state.projectId}/lorebooks`,
+      undefined,
+      [200],
+    );
+    const restoredLorebook = restoredLorebooks.find(
+      (item) => item.lorebook.id === state.lorebookId,
+    );
+    const restoredBindings = await jsonRequest<{
+      lorebookIds: string[];
+    }>(
+      app,
+      "GET",
+      `/api/personas/${state.narratorPersonaId}/lorebooks`,
+      undefined,
+      [200],
+    );
+    if (
+      !restoredLorebook?.entries.some(
+        (entry) => entry.id === state.loreEntryId,
+      ) ||
+      !restoredBindings.lorebookIds.includes(state.lorebookId)
+    ) {
+      throw new Error(
+        "lorebook or persona binding did not survive app restart",
+      );
+    }
+    recordCheck("lorebook and binding survived cross-process restart", true);
 
     const adoptionRun = await jsonRequest<{ run: { id: string } }>(
       app,
       "POST",
       `/api/cocreate/sessions/${state.sessionId}/adoptions`,
       {
+        requestId: globalThis.crypto.randomUUID(),
         branchId: state.mainBranchId,
         fromTurnId: room.turns[0]!.id,
         toTurnId: room.turns[1]!.id,
@@ -483,7 +648,7 @@ async function resumeMain(resumeFrom: string) {
       `${current.content.length} chars`,
     );
 
-    const selectionEnd = Math.min(100, current.content.length);
+    const selectionEnd = Math.min(36, current.content.length);
     const quote = current.content.slice(0, selectionEnd);
     await jsonRequest(
       app,
@@ -508,7 +673,7 @@ async function resumeMain(resumeFrom: string) {
         selectionStart: 0,
         selectionEnd,
         instruction:
-          "保持事件、视角与专名不变，压紧句子并加强纸张和潮气的触感；不要添加新设定。",
+          "只改写这个短选区，替换文本不超过 50 个汉字；保持事件、视角与专名不变，加强纸张触感，不添加新设定。",
       },
       [202],
     );
@@ -680,7 +845,7 @@ async function finishRun(
       app,
       "POST",
       `/api/runs/${runId}/advance`,
-      undefined,
+      { projectId },
       [200],
     );
     watcher.diffAll();
@@ -758,7 +923,7 @@ interface RunSnapshot {
 }
 
 interface SessionDetail {
-  session: { id: string; activeBranchId: string | null };
+  session: { id: string; activeBranchId: string | null; version: number };
   branches: { id: string }[];
   turns: {
     id: string;

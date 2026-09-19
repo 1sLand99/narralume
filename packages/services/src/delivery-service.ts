@@ -1,5 +1,8 @@
 import { randomUuid, sha256Hex } from "@narralume/domain";
-import { AUTOMATION_DEFAULTS } from "@narralume/contracts";
+import {
+  AUTOMATION_DEFAULTS,
+  PersonaCardProfileSchema,
+} from "@narralume/contracts";
 import { decodeBase64 as decodeBase64Bytes } from "./internal/bytes.js";
 import { declaredUncompressedSize } from "./internal/zip.js";
 import {
@@ -33,6 +36,7 @@ import {
   SqliteDeliveryRepository,
   SqliteDocumentRepository,
   SqliteImportUploadRepository,
+  SqliteLoreRepository,
   SqliteNarrativeStateRepository,
   SqliteProjectCoverRepository,
   SqliteProjectRepository,
@@ -55,6 +59,10 @@ const BundleCountsSchema = z.object({
   versions: z.number().int().nonnegative(),
   drafts: z.number().int().nonnegative(),
   personas: z.number().int().nonnegative(),
+  lorebooks: z.number().int().nonnegative(),
+  loreEntries: z.number().int().nonnegative(),
+  personaLorebookBindings: z.number().int().nonnegative(),
+  sessionLorebookBindings: z.number().int().nonnegative(),
   styles: z.number().int().nonnegative(),
   skills: z.number().int().nonnegative(),
   annotations: z.number().int().nonnegative(),
@@ -74,7 +82,7 @@ export type BundleCounts = z.infer<typeof BundleCountsSchema>;
 const BundleSchema = z.object({
   manifest: z.object({
     format: z.literal("narralume"),
-    version: z.literal(3),
+    version: z.literal(5),
     exportedAt: z.string(),
     counts: BundleCountsSchema,
     options: z
@@ -108,6 +116,16 @@ const BundleSchema = z.object({
     }),
   ),
   personas: z.array(z.record(z.string(), z.unknown())),
+  lorebooks: z
+    .array(
+      z.object({
+        lorebook: z.record(z.string(), z.unknown()),
+        entries: z.array(z.record(z.string(), z.unknown())).default([]),
+        personaIds: z.array(z.string()).default([]),
+        sessionIds: z.array(z.string()).default([]),
+      }),
+    )
+    .default([]),
   styles: z.array(z.record(z.string(), z.unknown())),
   skills: z.array(z.record(z.string(), z.unknown())),
   cover: z
@@ -186,6 +204,7 @@ export class DeliveryService {
   private readonly documents: SqliteDocumentRepository;
   private readonly state: SqliteNarrativeStateRepository;
   private readonly creative: SqliteCreativeRepository;
+  private readonly lore: SqliteLoreRepository;
   private readonly delivery: SqliteDeliveryRepository;
   private readonly automation: SqliteAutomationRepository;
   private readonly uploads: SqliteImportUploadRepository;
@@ -202,6 +221,7 @@ export class DeliveryService {
       this.story,
     );
     this.creative = new SqliteCreativeRepository(database);
+    this.lore = new SqliteLoreRepository(database);
     this.delivery = new SqliteDeliveryRepository(database);
     this.automation = new SqliteAutomationRepository(database);
     this.uploads = new SqliteImportUploadRepository(database);
@@ -600,6 +620,20 @@ export class DeliveryService {
         draft: this.documents.getDraft(projectId, document.id),
       }));
     const personas = this.creative.listPersonas(projectId, true);
+    const lorebooks = this.lore.listLorebooks(projectId).map((lorebook) => ({
+      lorebook,
+      entries: this.lore.listLoreEntries(lorebook.id),
+      personaIds: records(
+        this.database,
+        "SELECT persona_id FROM persona_lorebooks WHERE lorebook_id = ? ORDER BY persona_id",
+        lorebook.id,
+      ).map((row) => String(row.persona_id)),
+      sessionIds: records(
+        this.database,
+        "SELECT session_id FROM cocreate_session_lorebooks WHERE lorebook_id = ? ORDER BY session_id",
+        lorebook.id,
+      ).map((row) => String(row.session_id)),
+    }));
     const styles = this.delivery.listStyleProfiles(projectId, true);
     const skills = this.delivery.listWritingSkills(projectId);
     const storedCover = new SqliteProjectCoverRepository(this.database).get(
@@ -832,6 +866,19 @@ export class DeliveryService {
       versions: documents.reduce((sum, item) => sum + item.versions.length, 0),
       drafts: documents.filter((item) => item.draft).length,
       personas: personas.length,
+      lorebooks: lorebooks.length,
+      loreEntries: lorebooks.reduce(
+        (sum, item) => sum + item.entries.length,
+        0,
+      ),
+      personaLorebookBindings: lorebooks.reduce(
+        (sum, item) => sum + item.personaIds.length,
+        0,
+      ),
+      sessionLorebookBindings: lorebooks.reduce(
+        (sum, item) => sum + item.sessionIds.length,
+        0,
+      ),
       styles: styles.length,
       skills: skills.length,
       annotations: annotations.length,
@@ -855,7 +902,7 @@ export class DeliveryService {
     return BundleSchema.parse({
       manifest: {
         format: "narralume",
-        version: 3,
+        version: 5,
         exportedAt: now,
         counts,
         options,
@@ -877,6 +924,7 @@ export class DeliveryService {
       foreshadows,
       documents,
       personas,
+      lorebooks,
       styles,
       skills,
       cover,
@@ -1610,6 +1658,8 @@ export class DeliveryService {
     const documentMap = new Map<string, string>();
     const versionMap = new Map<string, string>();
     const personaMap = new Map<string, string>();
+    const lorebookMap = new Map<string, string>();
+    const sessionMap = new Map<string, string>();
     const conversationMap = new Map<string, string>();
     const messageMap = new Map<string, string>();
     const activityMap = new Map<string, string>();
@@ -1624,6 +1674,9 @@ export class DeliveryService {
     let restoredReviewIssues = 0;
     let restoredCoCreateSessions = 0;
     let restoredStoryTurns = 0;
+    let restoredLoreEntries = 0;
+    let restoredPersonaLorebookBindings = 0;
+    let restoredSessionLorebookBindings = 0;
     let restoredMessages = 0;
     let restoredActivities = 0;
     let restoredLongGoals = 0;
@@ -1985,12 +2038,53 @@ export class DeliveryService {
         description: stringField(source, "description"),
         instructions: stringField(source, "instructions") ?? "",
         voice: objectField(source, "voice"),
+        profile: PersonaCardProfileSchema.parse(source.profile),
         status:
           stringField(source, "status") === "retired" ? "retired" : "active",
         createdAt: now,
         updatedAt: now,
         version: 0,
       });
+    }
+    for (const item of bundle.lorebooks) {
+      const oldLorebookId = required(
+        stringField(item.lorebook, "id"),
+        "lorebook id",
+      );
+      const lorebookId = randomUuid();
+      lorebookMap.set(oldLorebookId, lorebookId);
+      this.lore.insertLorebook({
+        id: lorebookId,
+        projectId,
+        name: stringField(item.lorebook, "name") ?? "恢复的世界书",
+        description: stringField(item.lorebook, "description"),
+        enabledGlobally: item.lorebook.enabledGlobally === true,
+        scanTurns: Math.trunc(
+          boundedNumber(item.lorebook.scanTurns, 0, 200, 24),
+        ),
+        enabled: item.lorebook.enabled !== false,
+        createdAt: now,
+        updatedAt: now,
+        version: 0,
+      });
+      for (const source of item.entries) {
+        this.lore.insertLoreEntry({
+          id: randomUuid(),
+          lorebookId,
+          title: stringField(source, "title") ?? "恢复的世界信息",
+          content: stringField(source, "content") ?? "（空白世界信息）",
+          keys: stringArray(source.keys),
+          constant: source.constant === true,
+          priority: Math.trunc(
+            boundedNumber(source.priority, -1_000_000, 1_000_000, 0),
+          ),
+          enabled: source.enabled !== false,
+          createdAt: now,
+          updatedAt: now,
+          version: 0,
+        });
+        restoredLoreEntries += 1;
+      }
     }
     for (const source of bundle.styles) {
       this.delivery.insertStyleProfile({
@@ -2172,6 +2266,8 @@ export class DeliveryService {
     }
     for (const item of bundle.cocreate) {
       const sessionId = randomUuid();
+      const oldSessionId = stringField(item.session, "id");
+      if (oldSessionId) sessionMap.set(oldSessionId, sessionId);
       const sessionBranchMap = new Map<string, string>();
       const turnMap = new Map<string, string>();
       this.database.raw
@@ -2191,7 +2287,7 @@ export class DeliveryService {
           )
             ? stringField(item.session, "status")
             : "archived",
-          ["manual", "round_robin", "auto"].includes(
+          ["manual", "round_robin", "natural"].includes(
             stringField(item.session, "speakerPolicy") ?? "",
           )
             ? stringField(item.session, "speakerPolicy")
@@ -2388,6 +2484,32 @@ export class DeliveryService {
           .run(activeBranchId, now, sessionId);
       }
     }
+    for (const item of bundle.lorebooks) {
+      const lorebookId = lorebookMap.get(
+        stringField(item.lorebook, "id") ?? "",
+      );
+      if (!lorebookId) continue;
+      for (const oldPersonaId of item.personaIds) {
+        const personaId = personaMap.get(oldPersonaId);
+        if (!personaId) continue;
+        this.database.raw
+          .prepare(
+            "INSERT INTO persona_lorebooks(persona_id, lorebook_id) VALUES (?, ?)",
+          )
+          .run(personaId, lorebookId);
+        restoredPersonaLorebookBindings += 1;
+      }
+      for (const oldSessionId of item.sessionIds) {
+        const sessionId = sessionMap.get(oldSessionId);
+        if (!sessionId) continue;
+        this.database.raw
+          .prepare(
+            "INSERT INTO cocreate_session_lorebooks(session_id, lorebook_id) VALUES (?, ?)",
+          )
+          .run(sessionId, lorebookId);
+        restoredSessionLorebookBindings += 1;
+      }
+    }
     for (const item of bundle.assistant) {
       const conversationId = randomUuid();
       const oldConversationId = required(
@@ -2549,6 +2671,10 @@ export class DeliveryService {
       versions: restoredVersions,
       drafts: restoredDrafts,
       personas: personaMap.size,
+      lorebooks: lorebookMap.size,
+      loreEntries: restoredLoreEntries,
+      personaLorebookBindings: restoredPersonaLorebookBindings,
+      sessionLorebookBindings: restoredSessionLorebookBindings,
       styles: bundle.styles.length,
       skills: bundle.skills.length,
       annotations: restoredAnnotations,

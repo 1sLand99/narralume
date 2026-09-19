@@ -24,6 +24,7 @@ export * from "./run-repository.js";
 export * from "./run-stream-repository.js";
 export * from "./automation-repository.js";
 export * from "./creative-repository.js";
+export * from "./lore-repository.js";
 export * from "./delivery-repository.js";
 export * from "./story-repository.js";
 export * from "./template-repository.js";

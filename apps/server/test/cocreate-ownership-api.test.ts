@@ -133,7 +133,7 @@ async function createRoom(
     url: `/api/projects/${projectId}/cocreate/sessions`,
     payload: {
       title,
-      speakerPolicy: "auto",
+      speakerPolicy: "natural",
       participantIds: [personaId],
       ...(targetOutlineNodeId ? { targetOutlineNodeId } : {}),
     },
@@ -241,7 +241,7 @@ describe("cocreate ownership guards (M3)", () => {
       url: `/api/projects/${projectA}/cocreate/sessions`,
       payload: {
         title: "错配房间",
-        speakerPolicy: "auto",
+        speakerPolicy: "natural",
         participantIds: [personaA],
         targetOutlineNodeId: chapterB,
       },

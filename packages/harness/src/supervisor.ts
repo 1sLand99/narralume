@@ -72,6 +72,7 @@ export interface HarnessStore {
     output: Readonly<Record<string, unknown>>,
     artifactKind: string,
     now: string,
+    additionalArtifacts?: readonly StepArtifact[],
   ): void;
   failStep(
     runId: string,
@@ -108,7 +109,14 @@ export interface HarnessStore {
 export interface StepExecutionResult {
   output: Readonly<Record<string, unknown>>;
   artifactKind: string;
+  /** Extra immutable artifacts committed atomically with the step output. */
+  additionalArtifacts?: readonly StepArtifact[];
   usage?: RunBudgetUsage;
+}
+
+export interface StepArtifact {
+  kind: string;
+  output: Readonly<Record<string, unknown>>;
 }
 
 export interface StepWorker {
@@ -328,6 +336,7 @@ export class HarnessSupervisor {
             result.output,
             result.artifactKind,
             this.now(),
+            result.additionalArtifacts,
           );
           if (result.usage) {
             this.store.recordBudget(

@@ -108,6 +108,7 @@ describe("SqliteRunRepository", () => {
       { receiptId: "receipt-1", compiledHash: "abc" },
       "context",
       now,
+      [{ kind: "lore-activation", output: { activated: ["entry-1"] } }],
     );
     runs.recordBudget(
       "run-1",
@@ -124,6 +125,25 @@ describe("SqliteRunRepository", () => {
     runs.finishLease("run-1", "worker-a", { requeue: true }, now);
 
     const snapshot = runs.getSnapshot("run-1");
+    expect(
+      database.raw
+        .prepare(
+          "SELECT kind, content_json FROM run_artifacts WHERE run_id = ? ORDER BY kind",
+        )
+        .all("run-1"),
+    ).toEqual([
+      {
+        kind: "context",
+        content_json: JSON.stringify({
+          compiledHash: "abc",
+          receiptId: "receipt-1",
+        }),
+      },
+      {
+        kind: "lore-activation",
+        content_json: JSON.stringify({ activated: ["entry-1"] }),
+      },
+    ]);
     expect(snapshot.steps[0]).toMatchObject({
       status: "succeeded",
       outputHash: expect.stringMatching(/^[a-f0-9]{64}$/),

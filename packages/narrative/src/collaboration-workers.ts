@@ -1,4 +1,4 @@
-import { sha256Hex } from "@narralume/domain";
+import { activateLoreEntries, sha256Hex } from "@narralume/domain";
 
 import { ContextCompiler, type ContextSource } from "@narralume/context";
 import {
@@ -8,7 +8,6 @@ import {
   type NarrativeRunStep,
   type RunBudgetUsage,
   type RunSnapshot,
-  type StoryTurn,
 } from "@narralume/domain";
 import type {
   StepExecutionResult,
@@ -25,6 +24,7 @@ import {
   SqliteCreativeRepository,
   SqliteDocumentRepository,
   SqliteDeliveryRepository,
+  SqliteLoreRepository,
   SqliteNarrativeStateRepository,
   SqliteProjectRepository,
   SqliteRetrievalRepository,
@@ -66,6 +66,8 @@ import {
   requireActiveRunCommit,
 } from "./project-guard.js";
 
+const LORE_CONTEXT_BUDGET_CHARS = 12_000;
+
 export class CollaborationWorkerSuite {
   private readonly creative: SqliteCreativeRepository;
   private readonly projects: SqliteProjectRepository;
@@ -77,6 +79,7 @@ export class CollaborationWorkerSuite {
   private readonly reviews: SqliteReviewRepository;
   private readonly state: SqliteNarrativeStateRepository;
   private readonly delivery: SqliteDeliveryRepository;
+  private readonly lore: SqliteLoreRepository;
   private readonly compiler: ContextCompiler;
   private readonly templates: SqliteTemplateRepository;
   private readonly storyState: StoryStatePacketBuilder;
@@ -100,6 +103,7 @@ export class CollaborationWorkerSuite {
       this.story,
     );
     this.delivery = new SqliteDeliveryRepository(database);
+    this.lore = new SqliteLoreRepository(database);
     this.compiler = new ContextCompiler(now);
     this.templates = new SqliteTemplateRepository(database);
     this.storyState = new StoryStatePacketBuilder(
@@ -202,7 +206,9 @@ export class CollaborationWorkerSuite {
       .requireSessionDetail(session.id)
       .participants.filter(
         (participant) =>
-          participant.enabled && participant.persona.status === "active",
+          participant.enabled &&
+          participant.persona.status === "active" &&
+          participant.persona.kind !== "author",
       );
     if (participants.length === 0) {
       throw permanent(
@@ -214,12 +220,24 @@ export class CollaborationWorkerSuite {
       (participant) => participant.personaId,
     );
     const branchTurns = this.creative.listBranchTurns(branch.id);
-    const expectedSpeakerId = chooseSpeaker(
-      session.speakerPolicy,
-      policyOptionalString(snapshot.run.policy, "speakerPersonaId"),
-      participants,
-      branchTurns,
+    const expectedSpeakerId = policyString(
+      snapshot.run.policy,
+      "speakerPersonaId",
     );
+    const speakerSelectionReason = policyString(
+      snapshot.run.policy,
+      "speakerSelectionReason",
+    );
+    const speakerSelectionHash = policyString(
+      snapshot.run.policy,
+      "speakerSelectionHash",
+    );
+    if (!allowedSpeakerIds.includes(expectedSpeakerId)) {
+      throw permanent(
+        "cocreate.speaker.invalid",
+        "The speaker selected for this run is no longer enabled",
+      );
+    }
     const visibleTurns = branchTurns.slice(-session.contextTurns);
     const personaById = new Map(
       [
@@ -239,9 +257,7 @@ export class CollaborationWorkerSuite {
           project.premise ? `命题：${project.premise}` : "",
           `会话：${session.title}`,
           `发言策略：${session.speakerPolicy}`,
-          expectedSpeakerId
-            ? `本轮必须由 Persona ${expectedSpeakerId} 发言。`
-            : "从允许的 Persona 中选择最自然的下一位发言者。",
+          `本轮必须由 Persona ${expectedSpeakerId} 发言。`,
         ]
           .filter(Boolean)
           .join("\n"),
@@ -253,13 +269,13 @@ export class CollaborationWorkerSuite {
         sourceId: session.id,
       },
       {
-        id: `room-personas:${session.id}`,
+        id: `room-roster:${session.id}`,
         kind: "session",
         label: "在场 Persona",
         content: participants
           .map(
             ({ persona, talkativeness }) =>
-              `- ${persona.id}｜${persona.name}｜${persona.kind}｜发言倾向 ${talkativeness}\n  设定：${persona.description ?? "未补充"}\n  表演指令：${persona.instructions || "保持角色一致"}\n  声线：${JSON.stringify(persona.voice)}`,
+              `- ${persona.id}｜${persona.name}｜${persona.kind}｜发言倾向 ${talkativeness}｜${clipText(persona.description ?? "未补充", 180)}`,
           )
           .join("\n"),
         authority: "locked",
@@ -269,7 +285,87 @@ export class CollaborationWorkerSuite {
         sourceType: "story_persona",
         sourceId: session.id,
       },
+      {
+        id: `speaker-selection:${snapshot.run.id}`,
+        kind: "task",
+        label: "本轮发言者决策",
+        content: `speakerPersonaId=${expectedSpeakerId}\nreason=${speakerSelectionReason}\nstableHash=${speakerSelectionHash}`,
+        authority: "locked",
+        priority: 100,
+        required: true,
+        compressible: false,
+        sourceType: "speaker_selection",
+        sourceId: snapshot.run.id,
+      },
     ];
+    const speakerPersona = personaById.get(expectedSpeakerId);
+    if (!speakerPersona) {
+      throw permanent(
+        "cocreate.speaker.invalid",
+        "The selected speaker Persona could not be loaded",
+      );
+    }
+    sources.push({
+      id: `room-speaker:${speakerPersona.id}`,
+      kind: "session",
+      label: `当前发言 Persona · ${speakerPersona.name}`,
+      content: [
+        `ID：${speakerPersona.id}`,
+        `名称：${speakerPersona.name}`,
+        `种类：${speakerPersona.kind}`,
+        `设定：${speakerPersona.description ?? "未补充"}`,
+        `表演指令：${speakerPersona.instructions || "保持角色一致"}`,
+        `声线：${JSON.stringify(speakerPersona.voice)}`,
+      ].join("\n"),
+      authority: "locked",
+      priority: 100,
+      required: true,
+      compressible: false,
+      sourceType: "story_persona",
+      sourceId: speakerPersona.id,
+    });
+    const profileContent = instructionsFor(project.language, {
+      "zh-CN": [
+        speakerPersona.profile.personality
+          ? `性格参考：${speakerPersona.profile.personality}`
+          : "",
+        speakerPersona.profile.scenario
+          ? `情境参考：${speakerPersona.profile.scenario}`
+          : "",
+        speakerPersona.profile.exampleDialogue
+          ? `示例对白：\n${speakerPersona.profile.exampleDialogue}`
+          : "",
+      ].filter(Boolean),
+      en: [
+        speakerPersona.profile.personality
+          ? `Personality reference: ${speakerPersona.profile.personality}`
+          : "",
+        speakerPersona.profile.scenario
+          ? `Scenario reference: ${speakerPersona.profile.scenario}`
+          : "",
+        speakerPersona.profile.exampleDialogue
+          ? `Example dialogue:\n${speakerPersona.profile.exampleDialogue}`
+          : "",
+      ].filter(Boolean),
+    });
+    if (profileContent) {
+      sources.push({
+        id: `room-speaker-profile:${speakerPersona.id}`,
+        kind: "session",
+        label: `${
+          promptLanguageOf(project.language) === "en"
+            ? "Current character card reference"
+            : "当前角色卡参考"
+        } · ${speakerPersona.name}`,
+        content: profileContent,
+        authority: "reference",
+        priority: 92,
+        required: false,
+        compressible: false,
+        sourceType: "persona_card_profile",
+        sourceId: speakerPersona.id,
+      });
+    }
     const activeStyle = this.delivery.getActiveStyleProfile(session.projectId);
     if (activeStyle) {
       sources.push({
@@ -388,9 +484,6 @@ export class CollaborationWorkerSuite {
         }),
       );
     }
-    const speakerPersona = expectedSpeakerId
-      ? personaById.get(expectedSpeakerId)
-      : null;
     const storyStatePacket = this.storyState.build({
       projectId: session.projectId,
       audience:
@@ -449,6 +542,67 @@ export class CollaborationWorkerSuite {
         metadata: { retrievalReasons: hit.reasons },
       });
     }
+    const targetTurnId = policyOptionalString(
+      snapshot.run.policy,
+      "targetTurnId",
+    );
+    const creationRequestId = policyOptionalString(
+      snapshot.run.policy,
+      "creationRequestId",
+    );
+    const loreVisibleTurns = branchTurns.filter(
+      (turn) => turn.id !== targetTurnId,
+    );
+    const authorTurn = targetTurnId
+      ? ([...loreVisibleTurns].reverse().find((turn) => turn.role === "user") ??
+        null)
+      : ([...loreVisibleTurns]
+          .reverse()
+          .find(
+            (turn) =>
+              turn.role === "user" &&
+              turn.metadata.creationRequestId === creationRequestId,
+          ) ?? null);
+    const loreActivation = activateLoreEntries({
+      projectId: session.projectId,
+      personaId: speakerPersona.id,
+      sessionId: session.id,
+      recentTurns: loreVisibleTurns
+        .filter((turn) => turn.id !== authorTurn?.id)
+        .slice(-200)
+        .map((turn) => turn.content),
+      authorInput: authorTurn?.content ?? null,
+      budgetChars: LORE_CONTEXT_BUDGET_CHARS,
+      candidates: this.lore.listLoreActivationCandidates(
+        session.projectId,
+        speakerPersona.id,
+        session.id,
+      ),
+    });
+    loreActivation.activated.forEach((entry, index) => {
+      sources.push({
+        id: "lore-entry:" + entry.entryId,
+        kind: "retrieval",
+        label:
+          (promptLanguageOf(project.language) === "en"
+            ? "World lore"
+            : "世界信息") +
+          " · " +
+          entry.title,
+        content: entry.content,
+        authority: "reference",
+        priority: 80 - index / 10_000,
+        required: false,
+        compressible: false,
+        sourceType: "lore_entry",
+        sourceId: entry.entryId,
+        metadata: {
+          lorebookId: entry.lorebookId,
+          scope: entry.scope,
+          matchedKeys: entry.matchedKeys,
+        },
+      });
+    });
     const compiled = this.compiler.compile({
       projectId: session.projectId,
       purpose: "cocreate-response",
@@ -471,6 +625,19 @@ export class CollaborationWorkerSuite {
       },
       sources,
     });
+    const loreContextEntries = loreActivation.activated.map((entry) => {
+      const receipt = compiled.receipt.entries.find(
+        (candidate) => candidate.sourceId === "lore-entry:" + entry.entryId,
+      );
+      return {
+        entryId: entry.entryId,
+        lorebookId: entry.lorebookId,
+        title: entry.title,
+        scope: entry.scope,
+        matchedKeys: entry.matchedKeys,
+        contextStatus: receipt?.status ?? "excluded",
+      };
+    });
     this.receipts.insert(
       queryEmbedding.degradation
         ? { ...compiled.receipt, degradations: [queryEmbedding.degradation] }
@@ -482,6 +649,21 @@ export class CollaborationWorkerSuite {
     );
     return {
       artifactKind: "cocreate-context",
+      additionalArtifacts: [
+        {
+          kind: "lore-activation",
+          output: {
+            sessionId: session.id,
+            branchId: branch.id,
+            speakerPersonaId: speakerPersona.id,
+            budgetChars: LORE_CONTEXT_BUDGET_CHARS,
+            usedChars: loreActivation.usedChars,
+            decisions: loreActivation.decisions,
+            entries: loreContextEntries,
+            contextReceiptId: compiled.receipt.id,
+          },
+        },
+      ],
       output: {
         sessionId,
         branchId,
@@ -489,8 +671,16 @@ export class CollaborationWorkerSuite {
         contextReceiptId: compiled.receipt.id,
         allowedSpeakerIds,
         expectedSpeakerId,
+        speakerSelectionReason,
+        speakerSelectionHash,
         storyStateFingerprint: storyStatePacket.fingerprint,
         storyStateCounts: storyStatePacket.counts,
+        loreActivation: {
+          includedCount: loreContextEntries.filter(
+            ({ contextStatus }) => contextStatus !== "excluded",
+          ).length,
+          entries: loreContextEntries,
+        },
         retrievalEmbedding: {
           model: queryEmbedding.model,
           modelId: queryEmbedding.modelId,
@@ -589,6 +779,7 @@ export class CollaborationWorkerSuite {
         intent: response.intent,
         emotionalShift: response.emotionalShift,
         suggestedCanonFacts: response.suggestedCanonFacts,
+        loreActivation: context.loreActivation ?? null,
       },
       now,
     });
@@ -1140,42 +1331,6 @@ export class CollaborationWorkerSuite {
       usage: zeroUsage(),
     };
   }
-}
-
-function chooseSpeaker(
-  policy: "manual" | "round_robin" | "auto",
-  requested: string | null,
-  participants: readonly {
-    personaId: string;
-    talkativeness: number;
-  }[],
-  turns: readonly StoryTurn[],
-): string | null {
-  const allowed = participants.map((participant) => participant.personaId);
-  if (policy === "manual") {
-    if (!requested || !allowed.includes(requested)) {
-      throw permanent(
-        "cocreate.speaker.required",
-        "A manual speaker policy must specify an enabled Persona",
-      );
-    }
-    return requested;
-  }
-  if (requested) {
-    if (!allowed.includes(requested)) {
-      throw permanent(
-        "cocreate.speaker.invalid",
-        "The specified Persona is not enabled",
-      );
-    }
-    return requested;
-  }
-  if (policy === "auto") return null;
-  const lastSpeaker = [...turns]
-    .reverse()
-    .find((turn) => turn.role === "assistant")?.personaId;
-  const start = lastSpeaker ? allowed.indexOf(lastSpeaker) + 1 : 0;
-  return allowed[start % allowed.length] ?? null;
 }
 
 function requiredArtifact(

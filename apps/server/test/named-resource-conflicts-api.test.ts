@@ -163,6 +163,14 @@ function personaPayload(name: string) {
     description: null,
     instructions: "只描述可观察的动作与物证。",
     voice: {},
+    profile: {
+      personality: null,
+      scenario: null,
+      exampleDialogue: null,
+      greetings: [],
+      creator: { name: null, notes: null, version: null, tags: [] },
+      source: { format: "native", importedAt: null },
+    },
   };
 }
 

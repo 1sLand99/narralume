@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   createCanonEntity,
   createCanonFact,
+  createDefaultPersonaCardProfile,
   createDocument,
   createOutlineNode,
   createProject,
@@ -203,6 +204,7 @@ database.transaction(() => {
     description: "贴近沈砚的有限视角叙述者",
     instructions: "只写可感知的动作与物证，不替人物解释主题。",
     voice: { distance: "close-third", cadence: "restrained" },
+    profile: createDefaultPersonaCardProfile(),
     status: "active",
     createdAt: now,
     updatedAt: now,

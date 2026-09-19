@@ -57,6 +57,7 @@ export {
   requireActiveCoCreateSession,
   requireProject,
   requireSelectionRange,
+  resolveCoCreateSpeaker,
   StudioServiceError,
 } from "./studio-service.js";
 export {
@@ -86,6 +87,22 @@ export {
   renderSkillMarkdown,
   WritingSkillPackageError,
 } from "./writing-skill-package.js";
+export {
+  extractCcv3Base64FromPng,
+  PersonaCardPngError,
+} from "./persona-card-png.js";
+export {
+  decodePersonaCardBase64,
+  parsePersonaCardJsonBytes,
+  PersonaCardFileError,
+} from "./persona-card-file.js";
+export {
+  exportCharacterCardV3,
+  parseCharacterCardV3,
+  PersonaCardServiceError,
+  type ParsedPersonaCardV3,
+  type PersonaCardImportSource,
+} from "./persona-card-service.js";
 
 // ---- 自 apps/server 迁入的运行时无关模块（M3 阶段 A）----
 export * from "./run-coordinator.js";
