@@ -1,6 +1,15 @@
 import type { bible as bibleZh } from "../zh/bible";
 
 export const bible: typeof bibleZh = {
+  board: {
+    title: "See the whole story", views: "Outline view", list: "Outline and editing", board: "Story board",
+    progress: "{total} chapters · {committed} committed", current: "Current focus: {title}", noCurrent: "No chapters awaiting work",
+    status: "Chapter status", pov: "POV character", all: "All", unknown: "Not set", noStructure: "Book level",
+    empty: "Create chapters in the outline to see the story structure.", noMatches: "No chapters match these filters.", noSummary: "No chapter summary yet",
+    povValue: "POV: {name}", goal: "Goal", conflict: "Conflict", outcome: "Planned outcome", openChapter: "Open in studio",
+    clues: "{count} related setups", noClues: "No linked setups", window: "Payoff window: {from} → {to}", evidence: "Evidence chapters:",
+    noEvidence: "No evidence chapters yet", unplacedClues: "Setups without payoff windows",
+  },
   title: "Story Bible",
   catalogAriaLabel: "Catalog counts",
   catalogCounts:

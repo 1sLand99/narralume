@@ -1,5 +1,14 @@
 /* 故事圣经：Canon Spread 阅读面、人工编辑器与 AI 候选桌。 */
 export const bible = {
+  board: {
+    title: "看清整部故事", views: "大纲视图", list: "大纲与编辑", board: "全书看板",
+    progress: "共 {total} 章 · 已定稿 {committed} 章", current: "当前推进：{title}", noCurrent: "暂无待推进章节",
+    status: "章节状态", pov: "视角人物", all: "全部", unknown: "未设置", noStructure: "直属全书",
+    empty: "先在大纲中建立章节，再查看全书结构。", noMatches: "没有符合筛选条件的章节。", noSummary: "暂无章节摘要",
+    povValue: "视角：{name}", goal: "目标", conflict: "冲突", outcome: "预期结果", openChapter: "进入写作",
+    clues: "相关伏笔 {count} 条", noClues: "暂无关联伏笔", window: "兑现窗口：{from} → {to}", evidence: "证据章节：",
+    noEvidence: "暂无证据章节", unplacedClues: "尚未安排兑现窗口的伏笔",
+  },
   title: "故事圣经",
   catalogAriaLabel: "编目数",
   catalogCounts: "{outline} 节 · {entities} 体 · {facts} 事 · {foreshadows} 伏",

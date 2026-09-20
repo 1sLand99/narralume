@@ -3,6 +3,25 @@
    只摊开一个主题；阅读面与人工编辑在同一张纸幅上左右相邻。
    ========================================================================== */
 
+.story-board { display: grid; gap: 1.25rem; min-width: 0; }
+.story-board__views, .story-board__filters, .story-board__evidence { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.story-board__views { margin-bottom: 1rem; }
+.story-board__views [aria-pressed="true"] { border-color: var(--ink); background: var(--paper-raised); }
+.story-board__filters label { display: grid; gap: 0.35rem; flex: 1 1 180px; }
+.story-board__filters select { width: 100%; min-height: 2.5rem; }
+.story-board__cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 1rem; align-items: start; }
+.story-board__card { min-width: 0; overflow-wrap: anywhere; border: 1px solid var(--hairline); border-radius: var(--radius-card); background: var(--paper-raised); padding: 1.15rem; display: grid; gap: 0.7rem; }
+.story-board__card[data-current="true"] { border-color: var(--ink-soft); }
+.story-board__card p, .story-board__card h3 { margin: 0; }
+.story-board__path { color: var(--ink-soft); font-size: 0.8rem; }
+.story-board__card dl { display: grid; gap: 0.6rem; margin: 0; }
+.story-board__card dt { color: var(--ink-soft); font-size: 0.8rem; }
+.story-board__card dd { margin: 0.2rem 0 0; }
+.story-board details { border-top: 1px solid var(--hairline); padding-top: 0.75rem; }
+.story-board summary { cursor: pointer; }
+.story-board ul { padding-left: 1.25rem; display: grid; gap: 0.8rem; }
+.story-board__evidence a { text-decoration: underline; }
+
 .bible {
   min-height: 100vh;
   padding: clamp(1.2rem, 3vw, 2.4rem) clamp(1rem, 2.5vw, 1.8rem)

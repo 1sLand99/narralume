@@ -3,7 +3,12 @@ import {
   extractPolicyUnknownFields,
 } from "@narralume/contracts";
 import type { NarrativeModelClient } from "@narralume/narrative";
-import { SqliteRunRepository } from "@narralume/persistence";
+import { createOutlineNode } from "@narralume/domain";
+import {
+  SqliteRunRepository,
+  SqliteStoryRepository,
+  SqliteContextReceiptRepository,
+} from "@narralume/persistence";
 import { NodeNarrativeDatabase } from "@narralume/persistence/node";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -31,6 +36,213 @@ afterEach(async () => {
 });
 
 describe("automation API", () => {
+  it("rejects an invalid arc reference without leaving a partially created volume", async () => {
+    const { app, database } = await setup(
+      automationModel({
+        structuredValue(purpose, request) {
+          if (purpose !== "rolling-outline") return undefined;
+          return {
+            ...(scriptedValue(purpose, request) as Record<string, unknown>),
+            volumeId: null,
+            arcId: "missing-arc",
+          };
+        },
+      }),
+    );
+    const projectId = (
+      await app.inject({
+        method: "POST",
+        url: "/api/projects",
+        payload: { requestId: "invalid-structure", title: "无效结构" },
+      })
+    ).json().id as string;
+    const sessionId = (
+      await app.inject({
+        method: "POST",
+        url: `/api/projects/${projectId}/autopilot/sessions`,
+        payload: {
+          requestId: "invalid-structure-session",
+          targetChapters: 1,
+          windowSize: 1,
+        },
+      })
+    ).json().id as string;
+    const story = new SqliteStoryRepository(database);
+    const before = story.listOutline(projectId);
+    await advanceSession(app, sessionId);
+    const runId = (await getSession(app, sessionId)).session.currentRunId!;
+    expect(await finishRun(app, projectId, runId)).toBe("failed");
+    expect(
+      new SqliteRunRepository(database)
+        .getSnapshot(runId)
+        .steps.find((step) => step.kind === "outline.commit")?.error?.code,
+    ).toBe("outline.structure.invalid");
+    expect(story.listOutline(projectId)).toEqual(before);
+  });
+
+  it("budgets a 200-chapter history and records compression instead of sending it all to the rolling planner", async () => {
+    const model = {
+      ...automationModel(),
+      effectiveContextWindow: () => 8_000,
+      effectiveOutputLimit: () => 1_200,
+    };
+    const { app, database } = await setup(model);
+    const projectId = (
+      await app.inject({
+        method: "POST",
+        url: "/api/projects",
+        payload: { requestId: "long-history", title: "长篇历史" },
+      })
+    ).json().id as string;
+    const story = new SqliteStoryRepository(database);
+    const root = story.listOutline(projectId)[0]!;
+    const now = new Date().toISOString();
+    for (let index = 0; index < 200; index += 1) {
+      const node = story.insertOutlineNode(
+        createOutlineNode({
+          id: `history-${index}`,
+          projectId,
+          parent: root,
+          kind: "chapter",
+          ordinal: index,
+          title: `Chapter ${index + 1}`,
+          summary: "既有历史因果与人物选择。".repeat(200),
+          now,
+        }),
+      );
+      story.updateOutlineStatus(projectId, node.id, "committed", now);
+    }
+    const session = (
+      await app.inject({
+        method: "POST",
+        url: `/api/projects/${projectId}/autopilot/sessions`,
+        payload: {
+          requestId: "long-history-session",
+          targetChapters: 1,
+          windowSize: 1,
+        },
+      })
+    ).json();
+    await advanceSession(app, session.id);
+    const runId = (await getSession(app, session.id)).session.currentRunId!;
+    expect(await finishRun(app, projectId, runId)).toBe("completed");
+    const receipt = new SqliteContextReceiptRepository(database)
+      .listForRun(runId)
+      .find((item) => item.purpose === "rolling-outline")!;
+    expect(receipt.budget.contextWindow).toBe(8_000);
+    expect(receipt.budget.used).toBeLessThanOrEqual(receipt.budget.available);
+    expect(receipt.entries.some((entry) => entry.status === "compressed")).toBe(
+      true,
+    );
+    expect(
+      receipt.entries.find((entry) => entry.sourceId === "planning-intent")
+        ?.status,
+    ).toBe("included");
+  });
+
+  it("reviews each written window, continues an arc, then advances to a new volume without treating the run as a book ending", async () => {
+    let projectId = "";
+    let planningCalls = 0;
+    const planningInputs: string[] = [];
+    const model = automationModel({
+      structuredValue(purpose, request) {
+        if (purpose !== "rolling-outline") return undefined;
+        planningCalls += 1;
+        planningInputs.push(JSON.stringify(request));
+        const outline = new SqliteStoryRepository(database).listOutline(
+          projectId,
+        );
+        const plan = scriptedValue(purpose, request) as Record<string, unknown>;
+        return {
+          ...plan,
+          volumeId:
+            planningCalls === 2
+              ? outline.find((node) => node.kind === "volume")!.id
+              : null,
+          arcId:
+            planningCalls === 2
+              ? outline.find((node) => node.kind === "arc")!.id
+              : null,
+          chapters: (plan.chapters as unknown[]).slice(0, 1),
+          nextArc: null,
+        };
+      },
+    });
+    const { app, database } = await setup(model);
+    projectId = (
+      await app.inject({
+        method: "POST",
+        url: "/api/projects",
+        payload: { requestId: "window-book", title: "跨窗口长篇" },
+      })
+    ).json().id;
+    const created = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/autopilot/sessions`,
+      payload: {
+        requestId: "window-session",
+        approvalMode: "continuous",
+        targetChapters: 3,
+        windowSize: 1,
+        maxRevisionCycles: 0,
+        chapterPolicy: { minChapterCharacters: 100 },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(202);
+    const sessionId = created.json().id as string;
+    for (let index = 0; index < 45; index += 1) {
+      await advanceSession(app, sessionId);
+      const detail = await getSession(app, sessionId);
+      if (detail.session.status === "completed") break;
+      expect(detail.session.status).not.toBe("failed");
+      if (detail.session.currentRunId) {
+        // Repeated coordination while a child is pending must not create another review.
+        const count = detail.links.length;
+        await advanceSession(app, sessionId);
+        expect((await getSession(app, sessionId)).links).toHaveLength(count);
+        expect(
+          await finishRun(app, projectId, detail.session.currentRunId),
+        ).toBe("completed");
+      }
+    }
+    const detail = await getSession(app, sessionId);
+    expect(detail.session).toMatchObject({
+      status: "completed",
+      completedChapters: 3,
+    });
+    expect(planningCalls).toBe(3);
+    expect(
+      detail.links.filter((link) => link.role === "closing-review"),
+    ).toHaveLength(3);
+    expect(detail.reviews).toHaveLength(6);
+    expect(planningInputs[1]).toContain("下一弧提高主动选择代价");
+    expect(planningInputs[0]).toContain("不表示故事弧、卷或全书必须结束");
+    const outline = new SqliteStoryRepository(database).listOutline(projectId);
+    expect(outline.filter((node) => node.kind === "volume")).toHaveLength(2);
+    const arcs = outline.filter((node) => node.kind === "arc");
+    expect(arcs).toHaveLength(2);
+    expect(
+      outline.filter(
+        (node) => node.kind === "chapter" && node.parentId === arcs[0]!.id,
+      ),
+    ).toHaveLength(2);
+    const receipts = new SqliteContextReceiptRepository(database).list(
+      projectId,
+    );
+    expect(
+      receipts.filter((receipt) => receipt.purpose === "rolling-outline"),
+    ).toHaveLength(3);
+    expect(
+      receipts.every(
+        (receipt) => receipt.budget.used <= receipt.budget.available,
+      ),
+    ).toBe(true);
+    await advanceSession(app, sessionId);
+    expect((await getSession(app, sessionId)).links).toHaveLength(
+      detail.links.length,
+    );
+  });
+
   it("lets the author reject or apply a high-impact steer and resumes the session (CR-95)", async () => {
     const { app } = await setup();
     const project = (
@@ -782,6 +994,7 @@ describe("automation API", () => {
       "chapter",
       "chapter",
       "chapter",
+      "closing-review",
     ]);
     expect(detail.steers).toEqual(
       expect.arrayContaining([
@@ -795,7 +1008,10 @@ describe("automation API", () => {
         }),
       ]),
     );
-    expect(detail.reviews).toEqual([]);
+    expect(detail.reviews.map((review) => review.scopeType)).toEqual([
+      "arc",
+      "volume",
+    ]);
     expect(detail.session.chapterPolicy).toMatchObject({
       qualityPreset: "standard",
       contextWindow: 8_000,
@@ -816,7 +1032,7 @@ describe("automation API", () => {
       // 不再由 reviewMaxOutputTokens(2_000) 推导（旧逻辑会得到 6_000）
       planningMaxOutputTokens: 24_000,
     });
-    expect(linkedRun("closing-review")).toBeUndefined();
+    expect(linkedRun("closing-review")?.policy).toMatchObject({ sessionId });
     const chapterRuns = detail.links
       .filter((link) => link.role === "chapter")
       .map((link) => runsById.get(link.runId));
@@ -1803,6 +2019,7 @@ function fatalModel(): NarrativeModelClient {
 
 function automationModel(
   options: {
+    structuredValue?: (purpose: string, request: unknown) => unknown;
     beforeStructured?: (
       purpose: string,
       request: unknown,
@@ -1832,9 +2049,10 @@ function automationModel(
     async structured(_run, _step, purpose, request, _contract, validate) {
       await options.beforeStructured?.(purpose, request);
       const value =
-        purpose === "semantic-review" && options.semanticReview
+        options.structuredValue?.(purpose, request) ??
+        (purpose === "semantic-review" && options.semanticReview
           ? options.semanticReview
-          : scriptedValue(purpose, request);
+          : scriptedValue(purpose, request));
       const checked = validate(value);
       if (!checked.success) throw new Error(checked.issues.join("; "));
       return { value: checked.data, usage, mode: "native", attempts: 1 };
@@ -1894,6 +2112,8 @@ function scriptedValue(purpose: string, request?: unknown): unknown {
   }
   if (purpose === "rolling-outline") {
     return {
+      volumeId: null,
+      arcId: null,
       rationale: "从熄灯异象逐步逼近代价。",
       volume: {
         title: "第一卷 雾港",

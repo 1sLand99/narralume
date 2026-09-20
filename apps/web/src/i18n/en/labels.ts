@@ -169,7 +169,7 @@ export const labels: typeof labelsZh = {
   autopilotLinkRole: {
     rollingPlan: "Upcoming-chapter plan",
     chapter: "This chapter",
-    closingReview: "Closing retrospective",
+    closingReview: "Progress retrospective",
   },
   steerClassification: {
     immediateCurrent: "Affects the current generation immediately",

@@ -15,9 +15,9 @@ export interface OutlineContextRequest {
 export function outlineContextSources(
   request: OutlineContextRequest,
 ): ContextSource[] {
-  const ordered = [...request.outline].sort((left, right) =>
-    left.path.localeCompare(right.path),
-  );
+  // The repository supplies depth-first sibling-ordinal order. Paths contain
+  // opaque IDs, not sortable chapter numbers; preserve the manuscript order.
+  const ordered = request.outline.filter((node) => node.status !== "abandoned");
   const byId = new Map(ordered.map((node) => [node.id, node]));
   const chapters = ordered.filter((node) => node.kind === "chapter");
   const summaryByScope = new Map(

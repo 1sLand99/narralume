@@ -2,6 +2,7 @@ import { randomUuid } from "@narralume/domain";
 
 import {
   buildRollingOutlineRecipe,
+  buildClosingReviewRecipe,
   classifyStepError,
   compileChapterRecipeTemplate,
 } from "@narralume/harness";
@@ -28,7 +29,7 @@ export class AutopilotCoordinator {
   #wakeAgain = false;
 
   constructor(
-    database: NarrativeDatabase,
+    private readonly database: NarrativeDatabase,
     private readonly runCoordinator: RunCoordinator,
     private readonly onChange: (
       sessionId: string,
@@ -143,12 +144,18 @@ export class AutopilotCoordinator {
     }
 
     const current = this.automation.requireSession(session.id);
+    const nextChapter = this.nextChapter(current.id);
+    if (
+      (!nextChapter || current.completedChapters >= current.targetChapters) &&
+      this.startProgressReview(current.id, now)
+    ) {
+      return this.changed(current.id, "review.started");
+    }
     if (current.completedChapters >= current.targetChapters) {
       this.automation.setSessionStatus(current.id, "completed", now);
       return this.changed(current.id, "session.completed");
     }
 
-    const nextChapter = this.nextChapter(current.id);
     if (nextChapter) {
       const notes = this.automation.consumeActiveNotes(current.id, now);
       const runId = randomUuid();
@@ -360,10 +367,6 @@ export class AutopilotCoordinator {
       }
       this.automation.recordChapterOutcome(sessionId, "completed", now);
     }
-    if (link.role === "closing-review") {
-      this.automation.setSessionStatus(sessionId, "completed", now);
-      return this.changed(sessionId, "session.completed");
-    }
     this.automation.setSessionStatus(sessionId, "running", now);
     return this.changed(sessionId, `${link.role}.completed`);
   }
@@ -429,6 +432,71 @@ export class AutopilotCoordinator {
             !resolved.has(node.id),
         ) ?? null
     );
+  }
+
+  /** Review the written window, not an assumed story ending. The persistent
+   * chapter-run anchor prevents duplicate reviews after restart/reconciliation. */
+  private startProgressReview(sessionId: string, now: string): boolean {
+    const session = this.automation.requireSession(sessionId);
+    const links = this.automation.listRunLinks(sessionId);
+    const lastChapter = [...links]
+      .reverse()
+      .find((link) => link.role === "chapter" && link.outcome === "completed");
+    if (
+      !lastChapter?.outlineNodeId ||
+      links.some(
+        (link) =>
+          link.role === "closing-review" &&
+          this.runs.getSnapshot(link.runId).run.policy.reviewThroughRunId ===
+            lastChapter.runId &&
+          !["cancelled", "failed"].includes(link.outcome ?? ""),
+      )
+    )
+      return false;
+    const outline = this.story.listOutline(session.projectId);
+    const byId = new Map(outline.map((node) => [node.id, node]));
+    let node = byId.get(lastChapter.outlineNodeId);
+    const scopes: ("arc" | "volume")[] = [];
+    const scopeIds: Record<string, string> = {};
+    while (node) {
+      if (node.kind === "arc" || node.kind === "volume") {
+        scopes.push(node.kind);
+        scopeIds[`${node.kind}Id`] = node.id;
+      }
+      node = node.parentId ? byId.get(node.parentId) : undefined;
+    }
+    if (!scopes.length) return false;
+    const runId = randomUuid();
+    const recipe = buildClosingReviewRecipe(runId, scopes);
+    this.database.transaction(() => {
+      this.runs.create({
+        id: runId,
+        projectId: session.projectId,
+        recipe: recipe.name,
+        recipeVersion: recipe.version,
+        mode: "autopilot",
+        targetOutlineNodeId: lastChapter.outlineNodeId,
+        policy: withRuntimeModelPolicy(
+          {
+            ...resolveSessionEffectivePolicy(session),
+            sessionId,
+            ...scopeIds,
+            reviewThroughRunId: lastChapter.runId,
+          },
+          this.environment,
+        ),
+        steps: recipe.steps,
+        now,
+      });
+      this.automation.attachRun(sessionId, {
+        runId,
+        role: "closing-review",
+        outlineNodeId: lastChapter.outlineNodeId,
+        now,
+      });
+    });
+    this.wakeRunWorker();
+    return true;
   }
 
   private abandonSessionPlans(sessionId: string, now: string): void {

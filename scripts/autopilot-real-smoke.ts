@@ -8,6 +8,7 @@ import type { ServerConfig } from "../apps/server/src/config.js";
 import {
   SqliteDocumentRepository,
   SqliteLlmCallRepository,
+  SqliteRunRepository,
 } from "@narralume/persistence";
 import { NodeNarrativeDatabase } from "@narralume/persistence/node";
 
@@ -120,6 +121,7 @@ try {
     "POST",
     `/api/projects/${projectId}/foundation/generate`,
     {
+      requestId: globalThis.crypto.randomUUID(),
       braindump: [
         "海边旧城的退潮区藏着一座回声邮局，只在月末最低潮的九十分钟内营业。",
         "二十七岁的修复师沈砚收到已故姐姐寄来的空白信，发现加热后会显出未来三天的字。",
@@ -130,7 +132,7 @@ try {
       preferences: {
         genre: "都市奇幻悬疑",
         tone: "克制、具象、带海潮般逐步逼近的压迫感",
-        targetChapters: chapters,
+        targetChapters: Math.max(24, chapters * 3),
         wordsPerChapter: 350,
       },
     },
@@ -171,7 +173,8 @@ try {
     "POST",
     `/api/projects/${projectId}/autopilot/sessions`,
     {
-      mode: "autopilot",
+      requestId: globalThis.crypto.randomUUID(),
+      approvalMode: "continuous",
       targetChapters: chapters,
       windowSize: 3,
       maxRevisionCycles: 1,
@@ -187,13 +190,6 @@ try {
         reviewMaxOutputTokens: 24_000,
         settlementMaxOutputTokens: 24_000,
         minChapterCharacters: 180,
-      },
-      childBudget: {
-        maxInputTokens: 120_000,
-        maxOutputTokens: 45_000,
-        maxCalls: 24,
-        maxCostUsd: null,
-        maxWallTimeMs: 1_800_000,
       },
     },
     [202],
@@ -300,6 +296,7 @@ try {
         "POST",
         `/api/autopilot/sessions/${session.id}/steers`,
         {
+          requestId: globalThis.crypto.randomUUID(),
           content:
             "从下一场开始，让沈砚发现姐姐的回声故意漏掉了一个潮汐时间，但不要改写已经提交的事实。",
         },
@@ -367,7 +364,7 @@ try {
     detail.session.completedChapters !== chapters ||
     committedChapters.length !== chapters ||
     rollingPlans.length < 2 ||
-    closingReviews.length !== 1 ||
+    closingReviews.length < 2 ||
     detail.reviews.length < 2 ||
     appliedSteers.length !== 1
   ) {
@@ -532,7 +529,7 @@ async function advanceRun(
     target,
     "POST",
     `/api/runs/${runId}/advance`,
-    undefined,
+    { projectId: new SqliteRunRepository(database).getRun(runId)!.projectId },
     [200],
   );
   tracker.diff(runId);

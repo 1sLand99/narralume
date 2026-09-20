@@ -34,11 +34,15 @@ export function buildSteerClassificationRecipe(
   ]);
 }
 
-export function buildClosingReviewRecipe(runId: string): AutomationRecipe {
-  return recipe(runId, "closing-review", [
-    ["arc", "arc.review", 5],
-    ["volume", "volume.review", 5],
-  ]);
+export function buildClosingReviewRecipe(
+  runId: string,
+  scopes: readonly ("arc" | "volume")[],
+): AutomationRecipe {
+  return recipe(
+    runId,
+    "closing-review",
+    scopes.map((scope) => [scope, `${scope}.review`, 5]),
+  );
 }
 
 function recipe(

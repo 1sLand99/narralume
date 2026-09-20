@@ -696,6 +696,8 @@ function scriptedAutomationValue(purpose: string): unknown {
           hook: "录音喊出她的名字",
         },
       ],
+      volumeId: null,
+      arcId: null,
       nextArc: {
         title: "回声弧",
         summary: "名字开始返回。",

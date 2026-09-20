@@ -369,6 +369,7 @@ export const errors: typeof errorsZh = {
     outlineRootProtected: "The book root node cannot be removed",
     outlineTitleEmpty: "Outline node title must not be empty",
     outlineVersionConflict: "The outline node was updated by another process; refresh before editing",
+    outlineStructureInvalid: "The planned volume or arc is unavailable. Replan and select an arc belonging to the chosen volume.",
     pathNotAllowed: "This endpoint is not in the public allowlist.",
     personaCardFileBase64Invalid: "The character-card file encoding is invalid",
     personaCardFileExtensionInvalid:

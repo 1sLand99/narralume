@@ -347,6 +347,7 @@ export const errors = {
     outlineRootProtected: "全书根节点不能移除",
     outlineTitleEmpty: "大纲节点标题不能为空",
     outlineVersionConflict: "大纲节点已被其他流程更新，请刷新后再编辑",
+    outlineStructureInvalid: "规划选择的卷或故事弧无效，请重新规划；故事弧必须属于选定卷。",
     pathNotAllowed: "该接口不在公开白名单内。",
     personaCardFileBase64Invalid: "角色卡文件编码无效",
     personaCardFileExtensionInvalid: "角色卡文件扩展名不受支持",

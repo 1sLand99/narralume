@@ -83,6 +83,8 @@ const PlannedChapterSchema = z.object({
 
 export const RollingOutlineProposalSchema = z.object({
   rationale: z.string().min(1),
+  volumeId: z.string().min(1).nullable(),
+  arcId: z.string().min(1).nullable(),
   volume: z.object({
     title: z.string().min(1),
     summary: z.string().min(1),
@@ -273,6 +275,8 @@ export const ROLLING_OUTLINE_CONTRACT: JsonSchemaContract = {
     additionalProperties: false,
     required: [
       "rationale",
+      "volumeId",
+      "arcId",
       "volume",
       "arc",
       "chapters",
@@ -281,6 +285,8 @@ export const ROLLING_OUTLINE_CONTRACT: JsonSchemaContract = {
     ],
     properties: {
       rationale: { type: "string" },
+      volumeId: { type: ["string", "null"] },
+      arcId: { type: ["string", "null"] },
       volume: outlineUnitSchema(["title", "summary", "goal"]),
       arc: outlineUnitSchema([
         "title",

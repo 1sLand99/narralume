@@ -233,6 +233,28 @@ afterEach(() => {
 });
 
 describe("故事圣经", () => {
+  it("全书看板沿用章节顺序，支持筛选并跳转伏笔证据", async () => {
+    const bible = { ...structuredClone(BIBLE), foreshadows: BIBLE.foreshadows.map((clue) => ({ ...clue,
+      targetFromNodeId: "n-ch-1", targetToNodeId: "n-ch-1", evidenceNodeIds: ["n-ch-1"],
+    })) };
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      if (String(input).endsWith("/story-bible")) return json(bible);
+      return json([]);
+    }));
+    renderBible("/projects/p-1-tides/bible?spread=outline&view=board");
+    await screen.findByRole("heading", { name: "看清整部故事" });
+    expect(screen.getByText("共 1 章 · 已定稿 1 章")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "进入写作" })).toHaveAttribute("href", "/projects/p-1-tides/studio?outline=n-ch-1");
+    fireEvent.click(screen.getByText("相关伏笔 1 条"));
+    expect(screen.getByRole("link", { name: "第一章 灯下潮痕" })).toHaveAttribute("href", "/projects/p-1-tides/studio?outline=n-ch-1");
+    fireEvent.change(screen.getByRole("combobox", { name: "章节状态" }), { target: { value: "planned" } });
+    expect(screen.getByText("没有符合筛选条件的章节。")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "进入写作" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "章节状态" }), { target: { value: "all" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "视角人物" }), { target: { value: "unknown" } });
+    expect(screen.getByRole("link", { name: "进入写作" })).toBeInTheDocument();
+  });
+
   it("每次只摊开一个 Canon Spread，并在同一纸幅编辑", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);

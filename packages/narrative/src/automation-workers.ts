@@ -1,4 +1,5 @@
 import { sha256Hex } from "@narralume/domain";
+import { ContextCompiler, type ContextSource } from "@narralume/context";
 
 import {
   createOutlineNode,
@@ -19,6 +20,7 @@ import {
 import {
   SqliteAutomationRepository,
   SqliteCanonRepository,
+  SqliteContextReceiptRepository,
   SqliteNarrativeStateRepository,
   SqliteProjectRepository,
   SqliteStoryRepository,
@@ -46,6 +48,7 @@ import {
   promptLanguageOf,
 } from "./prompt-language.js";
 import { StoryStatePacketBuilder } from "./story-state-packet.js";
+import { outlineContextSources } from "./outline-context.js";
 import {
   requireActiveProject,
   requireActiveRunCommit,
@@ -266,20 +269,14 @@ export class AutomationWorkerSuite {
     const compass = this.automation.getCompass(session.projectId);
     const intent = this.story.getAuthorIntent(session.projectId);
     const outline = this.story.listOutline(session.projectId);
-    const summaries = outline
-      .filter((node) => node.kind === "chapter" && node.status === "committed")
-      .map((node) => ({
-        title: node.title,
-        summary:
-          this.state.latestSummary(session.projectId, "chapter", node.id)
-            ?.summary ?? node.summary,
-      }));
     const steers = this.automation
       .listSteers(sessionId)
-      .filter((steer) =>
-        ["classified", "applied", "awaiting_confirmation"].includes(
-          steer.status,
-        ),
+      .filter(
+        (steer) =>
+          steer.status === "applied" &&
+          ["future_plan", "canon_change", "rewrite_existing"].includes(
+            steer.classification ?? "",
+          ),
       )
       .map((steer) => ({
         content: steer.content,
@@ -297,6 +294,112 @@ export class AutomationWorkerSuite {
       session.targetChapters - session.completedChapters,
     );
     const windowSize = Math.min(session.windowSize, remaining);
+    const contextWindow =
+      this.model.effectiveContextWindow?.(snapshot.run, "rolling-outline") ??
+      64_000;
+    const outputReserve = Math.min(
+      policyNumber(snapshot.run.policy, "planningMaxOutputTokens", 10_000),
+      this.model.effectiveOutputLimit?.(snapshot.run, "rolling-outline") ??
+        10_000,
+      Math.floor(contextWindow * 0.4),
+    );
+    const latestChapter = outline
+      .filter((node) => node.kind === "chapter" && node.status === "committed")
+      .at(-1);
+    const sources: ContextSource[] = [
+      {
+        id: "planning-task",
+        kind: "task",
+        label: "本次规划任务",
+        authority: "locked",
+        priority: 100,
+        required: true,
+        compressible: false,
+        sourceType: "autopilot_session",
+        sourceId: session.id,
+        content: JSON.stringify({
+          title: project.title,
+          windowChapters: windowSize,
+          runRemainingChapters: remaining,
+          activeStructure: outline
+            .filter(
+              (node) =>
+                ["arc", "volume"].includes(node.kind) &&
+                node.status !== "abandoned",
+            )
+            .slice(-6)
+            .map(compactOutline),
+        }),
+      },
+      {
+        id: "planning-intent",
+        kind: "author-intent",
+        label: "作者意图与全书方向",
+        authority: "locked",
+        priority: 99,
+        required: true,
+        compressible: false,
+        sourceType: "author_intent",
+        sourceId: project.id,
+        content: JSON.stringify({ intent, compass }),
+      },
+      ...outlineContextSources({
+        projectId: project.id,
+        outline,
+        chapterSummaries: this.state.listLatestSummaries(project.id, "chapter"),
+        targetOutlineNodeId: latestChapter?.id ?? null,
+      }),
+      ...continuationState.sources,
+      ...[
+        ...this.state.listLatestSummaries(project.id, "arc"),
+        ...this.state.listLatestSummaries(project.id, "volume"),
+      ]
+        .toSorted((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .map((review, index): ContextSource => ({
+          id: `planning-review:${review.id}`,
+          kind: "summary",
+          label: "阶段复盘建议（不是已发生事实）",
+          content: JSON.stringify({
+            scopeId: review.scopeId,
+            summary: review.summary,
+            suggestions: review.stateDelta,
+          }),
+          summary: review.summary,
+          authority: "reference",
+          priority: Math.max(50, 96 - index),
+          required: index < 2,
+          sourceType: "narrative_summary",
+          sourceId: review.id,
+        })),
+      ...steers.map((steer, index): ContextSource => ({
+        id: `planning-steer:${index}`,
+        kind: "author-intent",
+        label: "作者已确认的后续规划指示",
+        content: steer.content,
+        authority: "locked",
+        priority: 99,
+        required: true,
+        compressible: false,
+        sourceType: "story_steer",
+        sourceId: session.id,
+      })),
+    ];
+    const compiled = new ContextCompiler(this.now).compile({
+      projectId: project.id,
+      purpose: "rolling-outline",
+      sources,
+      budget: {
+        contextWindow,
+        outputReserve,
+        fixedInstructionReserve: 1_500,
+        schemaReserve: 1_500,
+        toolReserve: 0,
+      },
+    });
+    new SqliteContextReceiptRepository(this.database).insert(compiled.receipt, {
+      runId: snapshot.run.id,
+      stepId: step.id,
+    });
     const result = await this.model.structured(
       snapshot.run,
       step,
@@ -307,36 +410,27 @@ export class AutomationWorkerSuite {
             "你是长篇小说滚动规划师。只详细规划当前可见窗口，不要一次冻结整部长篇。",
             "计划必须承接已提交章节，兑现指南针，尊重作者锁定意图与 steer。",
             "每章要有目标、阻力、转折、结果与结尾钩子；结果必须推动因果链。",
+            "运行剩余章数只表示本次委托的工作量，不表示故事弧、卷或全书必须结束。全书结局只由作者意图与已建立的叙事进展决定，不为用完窗口而提前收束。",
+            "volumeId/arcId 填写要继续的现有卷/弧 ID；只有剧情进入新阶段时才填 null 创建新卷/弧。一弧可以跨多个窗口，换窗口不等于换弧。继续已有结构时保留其目标和已经发生的结果。arcId 必须属于选定的 volumeId。",
+            "准确输出本次窗口要求的章节数量。nextArc 是可调整的远期骨架，不能当作已发生的事实；复盘建议需评估后落实到本次计划，不得当作作者命令或正典。",
           ],
           en: [
             "You are the rolling planner of a long-form novel. Plan only the currently visible window in detail; never freeze an entire long novel at once.",
             "The plan must continue from committed chapters, honor the compass, and respect the author's locked intent and steers.",
             "Each chapter needs a goal, resistance, a turn, an outcome, and a closing hook; outcomes must advance the causal chain.",
+            "Remaining run chapters describe this assignment's workload, not the end of an arc, volume, or book. Resolve the book only when author intent and established narrative progress call for it, never just to finish a window.",
+            "Set volumeId/arcId to the existing volume/arc to continue, or null to create one only when the story enters a new phase. An arc may span several windows. Preserve existing goals and established outcomes. arcId must belong to volumeId.",
+            "Return exactly the requested window chapter count. nextArc is a revisable future outline, not a past event. Evaluate retrospective suggestions and incorporate useful ones; they are neither author commands nor canon.",
           ],
         }),
         messages: [
           {
             role: "user",
-            content: [
-              `作品：${project.title}`,
-              `指南针：${JSON.stringify(compass)}`,
-              `作者意图：${JSON.stringify(intent)}`,
-              `现有大纲：${JSON.stringify(outline.map(compactOutline))}`,
-              `已提交摘要：${JSON.stringify(summaries)}`,
-              `<author-continuation-state>\n${continuationState.sources
-                .map((source) => `${source.label}\n${source.content}`)
-                .join("\n\n")}\n</author-continuation-state>`,
-              `待考虑 steer：${JSON.stringify(steers)}`,
-              `本次详细规划 ${windowSize} 章，并给出下一弧骨架。`,
-            ].join("\n\n"),
+            content: compiled.text,
           },
         ],
         reasoningEffort: "low",
-        maxOutputTokens: policyNumber(
-          snapshot.run.policy,
-          "planningMaxOutputTokens",
-          10_000,
-        ),
+        maxOutputTokens: outputReserve,
       },
       ROLLING_OUTLINE_CONTRACT,
       automationValidator(RollingOutlineProposalSchema),
@@ -355,6 +449,7 @@ export class AutomationWorkerSuite {
           attempts: result.attempts,
           // 保存生成时的大纲基线；commit 时比对，防止后台规划覆盖期间的人工编辑。
           outlineFingerprint: outlineFingerprint(outline),
+          contextReceiptId: compiled.receipt.id,
         },
       },
       usage: result.usage,
@@ -391,7 +486,18 @@ export class AutomationWorkerSuite {
           "outline.root.missing",
           "Project is missing the book root node",
         );
-      let volume = latestNode(outline, "volume");
+      let volume = plan.volumeId
+        ? this.story.getOutlineNode(session.projectId, plan.volumeId)
+        : null;
+      if (
+        plan.volumeId &&
+        (!volume || volume.kind !== "volume" || volume.status === "abandoned")
+      ) {
+        throw permanent(
+          "outline.structure.invalid",
+          "The selected volume is unavailable",
+        );
+      }
       if (!volume) {
         volume = this.story.insertOutlineNode(
           createOutlineNode({
@@ -412,13 +518,21 @@ export class AutomationWorkerSuite {
         session.projectId,
         volume.id,
       );
-      let arc = volumeChildren.find(
-        (node) =>
-          node.kind === "arc" &&
-          node.metadata.detail === "skeleton" &&
-          this.story.listOutlineChildren(session.projectId, node.id).length ===
-            0,
-      );
+      let arc = plan.arcId
+        ? this.story.getOutlineNode(session.projectId, plan.arcId)
+        : null;
+      if (
+        plan.arcId &&
+        (!arc ||
+          arc.kind !== "arc" ||
+          arc.parentId !== volume.id ||
+          arc.status === "abandoned")
+      ) {
+        throw permanent(
+          "outline.structure.invalid",
+          "The selected arc must belong to the selected volume",
+        );
+      }
       if (arc) {
         arc = this.story.updateOutlineDetails(
           session.projectId,
@@ -429,7 +543,11 @@ export class AutomationWorkerSuite {
             goal: plan.arc.goal,
             conflict: plan.arc.conflict,
             outcome: plan.arc.outcome,
-            metadata: { detail: "active", sourceRunId: snapshot.run.id },
+            metadata: {
+              ...arc.metadata,
+              detail: "active",
+              sourceRunId: snapshot.run.id,
+            },
           },
           now,
         );
@@ -498,7 +616,12 @@ export class AutomationWorkerSuite {
       let nextArcId: string | null = null;
       if (
         plan.nextArc &&
-        session.completedChapters + chapterIds.length < session.targetChapters
+        !volumeChildren.some(
+          (node) =>
+            node.kind === "arc" &&
+            node.metadata.detail === "skeleton" &&
+            node.status !== "abandoned",
+        )
       ) {
         const nextId = `${snapshot.run.id}:next-arc`;
         const existing = this.story.getOutlineNode(session.projectId, nextId);
@@ -647,6 +770,7 @@ export class AutomationWorkerSuite {
     const chapters = outline.filter(
       (candidate) =>
         candidate.kind === "chapter" &&
+        candidate.status === "committed" &&
         (candidate.parentId === node.id ||
           (scopeType === "volume" &&
             outline.some(
@@ -662,6 +786,59 @@ export class AutomationWorkerSuite {
           ?.summary ?? chapter.summary,
     }));
     const source = JSON.stringify(evidence);
+    const contextWindow =
+      this.model.effectiveContextWindow?.(
+        snapshot.run,
+        `${scopeType}-review`,
+      ) ?? 64_000;
+    const outputReserve = Math.min(
+      4_000,
+      this.model.effectiveOutputLimit?.(snapshot.run, `${scopeType}-review`) ??
+        4_000,
+      Math.floor(contextWindow * 0.4),
+    );
+    const compiled = new ContextCompiler(this.now).compile({
+      projectId: snapshot.run.projectId,
+      purpose: `${scopeType}-review`,
+      budget: {
+        contextWindow,
+        outputReserve,
+        fixedInstructionReserve: 1_000,
+        schemaReserve: 1_000,
+        toolReserve: 0,
+      },
+      sources: [
+        {
+          id: "review-task",
+          kind: "task",
+          label: "复盘范围与全书方向",
+          authority: "locked",
+          priority: 100,
+          required: true,
+          compressible: false,
+          sourceType: "outline_node",
+          sourceId: node.id,
+          content: JSON.stringify({
+            scope: node.title,
+            compass: this.automation.getCompass(snapshot.run.projectId),
+          }),
+        },
+        ...evidence.map((chapter, index): ContextSource => ({
+          id: `review-chapter:${chapters[index]!.id}`,
+          kind: "summary",
+          label: chapter.title,
+          content: JSON.stringify(chapter),
+          authority: "confirmed",
+          priority: 60 + 30 * ((index + 1) / evidence.length),
+          sourceType: "outline_node",
+          sourceId: chapters[index]!.id,
+        })),
+      ],
+    });
+    new SqliteContextReceiptRepository(this.database).insert(compiled.receipt, {
+      runId: snapshot.run.id,
+      stepId: step.id,
+    });
     const result = await this.model.structured(
       snapshot.run,
       step,
@@ -673,25 +850,23 @@ export class AutomationWorkerSuite {
             "zh-CN": [
               `你是长篇小说${scopeType === "arc" ? "故事弧" : "卷"}复盘编辑。`,
               "基于章节摘要评估承诺兑现、因果、人物弧、节奏和连续性。建议服务于下一滚动窗口，不改写已提交事实。",
+              "这是当前已写部分的阶段复盘，不意味着故事弧、卷或全书已经结束。区分已兑现、仍在发展和需要后续处理的承诺；不要仅因本次运行结束而要求结局或回收所有伏笔。仅依据所给摘要判断，明确证据不足之处。",
             ],
             en: [
               `You are the retrospective editor of a long-form novel ${scopeType === "arc" ? "story arc" : "volume"}.`,
               "Assess promise fulfillment, causality, character arcs, pacing, and continuity from chapter summaries. Suggestions serve the next rolling window and never rewrite committed facts.",
+              "This reviews progress so far, not an assumed arc, volume, or book ending. Distinguish fulfilled promises, ongoing developments, and future work. Do not demand an ending or resolve every setup because this run is over. State evidence limitations when summaries are insufficient.",
             ],
           },
         ),
         messages: [
           {
             role: "user",
-            content: [
-              `范围：${node.title}`,
-              `指南针：${JSON.stringify(this.automation.getCompass(snapshot.run.projectId))}`,
-              `章节证据：${source}`,
-            ].join("\n\n"),
+            content: compiled.text,
           },
         ],
         reasoningEffort: "low",
-        maxOutputTokens: 4_000,
+        maxOutputTokens: outputReserve,
       },
       PLANNING_REVIEW_CONTRACT,
       automationValidator(PlanningReviewResultSchema),
@@ -740,6 +915,7 @@ export class AutomationWorkerSuite {
         outlineNodeId: node.id,
         sourceHash,
         generation: { mode: result.mode, attempts: result.attempts },
+        contextReceiptId: compiled.receipt.id,
       },
       usage: result.usage,
     };
@@ -768,13 +944,6 @@ function compactOutline(node: OutlineNode) {
     status: node.status,
     metadata: node.metadata,
   };
-}
-
-function latestNode(
-  outline: readonly OutlineNode[],
-  kind: OutlineNode["kind"],
-): OutlineNode | null {
-  return [...outline].reverse().find((node) => node.kind === kind) ?? null;
 }
 
 function nextOrdinal(nodes: readonly OutlineNode[], parentId: string): number {

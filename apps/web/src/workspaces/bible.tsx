@@ -24,6 +24,7 @@ import {
 import { useProjectId } from "../lib/project-route";
 import { BibleEditor, type BibleEditorSection } from "./bible/editor";
 import { CanonCandidatePanel } from "./bible/candidate-panel";
+import { StoryBoard } from "./bible/story-board";
 
 export type BibleSectionId = BibleEditorSection;
 
@@ -42,6 +43,7 @@ export function BibleWorkspace() {
   const projectId = useProjectId();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedSection = searchParams.get("spread");
+  const boardView = searchParams.get("view") === "board";
   const [activeSectionState, setActiveSectionState] =
     useState<BibleSectionId>(() => bibleSection(requestedSection));
   const activeSection = bibleSection(requestedSection ?? activeSectionState);
@@ -139,6 +141,10 @@ export function BibleWorkspace() {
           </aside>
 
           <div className="bible__main">
+            {activeSection === "outline" ? <div className="story-board__views" aria-label={t("bible.board.views")}>
+              {(["list", "board"] as const).map((view) => <button key={view} type="button" className="btn" aria-pressed={boardView === (view === "board")} onClick={() => setSearchParams((current) => { const next = new URLSearchParams(current); next.set("view", view); return next; }, { replace: true })}>{t(`bible.board.${view}`)}</button>)}
+            </div> : null}
+            {activeSection === "outline" && boardView ? <StoryBoard key={projectId} bible={bible} /> :
             <article
               className="bible__active-spread"
               aria-label={t("bible.spreadAriaLabel", {
@@ -162,7 +168,7 @@ export function BibleWorkspace() {
                   spread={activeSection}
                 />
               </aside>
-            </article>
+            </article>}
           </div>
         </div>
       ) : null}

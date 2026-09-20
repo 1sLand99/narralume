@@ -7,6 +7,48 @@ import { outlineContextSources } from "../src/outline-context.js";
 const now = "2026-08-10T00:00:00.000Z";
 
 describe("outlineContextSources", () => {
+  it("preserves manuscript order across double-digit chapters and reordered volumes with opaque IDs", () => {
+    const book = node("book", "book", 0, "/book", 0, null);
+    const first = node("z-volume", "volume", 0, "/book/z-volume", 1, "book");
+    const second = node("a-volume", "volume", 1, "/book/a-volume", 1, "book");
+    const chapters = Array.from({ length: 12 }, (_, index) =>
+      node(
+        `chapter-${index + 1}`,
+        "chapter",
+        index,
+        `${first.path}/chapter-${index + 1}`,
+        2,
+        first.id,
+      ),
+    );
+    const next = node(
+      "random-next",
+      "chapter",
+      0,
+      `${second.path}/random-next`,
+      2,
+      second.id,
+    );
+    const near = (outline: OutlineNode[], target: string) =>
+      outlineContextSources({
+        projectId: "p1",
+        outline,
+        targetOutlineNodeId: target,
+        nearBefore: 1,
+        nearAfter: 1,
+      }).find((source) => source.id === "outline:near")!.content;
+    const original = [book, first, ...chapters, second, next];
+    expect(near(original, "chapter-2")).toContain("[node:chapter-1]");
+    expect(near(original, "chapter-2")).not.toContain("[node:chapter-12]");
+    expect(near(original, "chapter-12")).toContain("[node:random-next]");
+    expect(
+      near([book, second, next, first, ...chapters], "chapter-1"),
+    ).toContain("[node:random-next]");
+    chapters[1]!.status = "abandoned";
+    expect(near(original, "chapter-3")).toContain("[node:chapter-1]");
+    expect(near(original, "chapter-3")).not.toContain("[node:chapter-2]");
+  });
+
   it("keeps a 200-chapter outline independently budgetable around the target", () => {
     const book = node("book", "book", 0, "/book", 0, null);
     const chapters = Array.from({ length: 200 }, (_, index) =>
