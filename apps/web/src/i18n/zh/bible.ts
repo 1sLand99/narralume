@@ -130,6 +130,8 @@ export const bible = {
     editTarget: "编辑对象",
     name: "名称",
     aliases: "别名",
+    attributes: "设定资料",
+    narrativeRole: "剧情作用",
     status: "状态",
     type: "类型",
     parent: "父节点",

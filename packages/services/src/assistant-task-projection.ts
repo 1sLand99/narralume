@@ -446,6 +446,7 @@ const STEP_LABEL_KEYS: Record<string, AssistantActivityTextDto> = {
   "canon.stage": activityText("activity.step.canonStage"),
   "foundation.generate": activityText("activity.step.foundationGenerate"),
   "outline.generate": activityText("activity.step.outlineGenerate"),
+  "outline.entities": activityText("activity.step.outlineEntities"),
   "context.compile": activityText("activity.step.contextCompile"),
   "scene.plan": activityText("activity.step.scenePlan"),
   "draft.generate": activityText("activity.step.draftGenerate"),

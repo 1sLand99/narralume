@@ -38,6 +38,7 @@ export type AutomationStepKind =
   | "foundation.generate"
   | "foundation.stage"
   | "outline.generate"
+  | "outline.entities"
   | "outline.commit"
   | "steer.classify"
   | "arc.review"

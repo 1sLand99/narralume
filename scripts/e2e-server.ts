@@ -81,6 +81,62 @@ function scriptedE2eModel(): NarrativeModelClient {
               reply: "已读取当前作品；下一步先收紧创作承诺，再推进章节。",
               toolCall: null,
             };
+      } else if (
+        purpose === "rolling-outline" &&
+        JSON.stringify(request).includes("实体候选端到端")
+      ) {
+        value = {
+          rationale: "调查扩展到外港，需要当地见证者和不同规则的空间。",
+          volumeId: null,
+          arcId: null,
+          volume: {
+            title: "港外",
+            summary: "调查沿航线扩展",
+            goal: "寻找寄信人",
+          },
+          arc: {
+            title: "新航线",
+            summary: "第一次到访外港",
+            goal: "取得航图",
+            conflict: "潮门将关",
+            outcome: "找到残页",
+          },
+          entityProposals: [
+            {
+              key: "pilot",
+              type: "character",
+              name: "沈渡",
+              aliases: ["摆渡人"],
+              description: "保存被删航线的领航员。",
+              narrativeRole: "带来外港视角并质疑调查者动机",
+              rationale: "需要熟悉当地航道的见证者，现有人物没有这段经历",
+            },
+            {
+              key: "harbor",
+              type: "location",
+              name: "潮门港",
+              aliases: [],
+              description: "只在特定潮位开放的内海港口。",
+              narrativeRole: "让通行时限成为阻力",
+              rationale: "提供具有独立通行规则的场景",
+            },
+          ],
+          chapters: [
+            {
+              title: "潮门将关",
+              summary: "寻找港外的见证者",
+              goal: "取得航图",
+              conflict: "通行时间有限",
+              outcome: "找到残页",
+              pov: { kind: "proposed", id: "pilot" },
+              entityRefs: [{ kind: "proposed", id: "harbor" }],
+              storyTime: null,
+              hook: "残页指向更远航线",
+            },
+          ],
+          nextArc: null,
+          continuityRisks: [],
+        };
       } else if (purpose === "canon-revision") {
         value = {
           summary: "把创作承诺收紧到灯塔失明的代价。",

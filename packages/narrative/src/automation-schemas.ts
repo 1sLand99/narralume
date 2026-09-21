@@ -65,18 +65,46 @@ export const FoundationGenerationArtifactSchema =
     }),
   });
 
+export const PlannedEntityRefSchema = z
+  .object({
+    kind: z.enum(["existing", "proposed"]),
+    id: z.string().trim().min(1).max(300),
+  })
+  .strict();
+
+export const PlannedEntityProposalSchema = z
+  .object({
+    key: z.string().regex(/^[a-zA-Z0-9_-]{1,60}$/),
+    type: z.enum([
+      "character",
+      "location",
+      "organization",
+      "item",
+      "rule",
+      "concept",
+    ]),
+    name: z.string().trim().min(1).max(300),
+    aliases: z.array(z.string().trim().min(1).max(300)).max(20),
+    description: z.string().trim().min(1).max(4_000),
+    narrativeRole: z.string().trim().min(1).max(2_000),
+    rationale: z.string().trim().min(1).max(2_000),
+  })
+  .strict();
+
 const PlannedChapterSchema = z.object({
   title: z.string().min(1),
   summary: z.string().min(1),
   goal: z.string().min(1),
   conflict: z.string().min(1),
   outcome: z.string().min(1),
-  povName: z.string().nullable(),
+  pov: PlannedEntityRefSchema.nullable(),
+  entityRefs: z.array(PlannedEntityRefSchema).max(30),
   storyTime: z.string().nullable(),
   hook: z.string().min(1),
 });
 
 export const RollingOutlineProposalSchema = z.object({
+  entityProposals: z.array(PlannedEntityProposalSchema).max(12),
   rationale: z.string().min(1),
   volumeId: z.string().min(1).nullable(),
   arcId: z.string().min(1).nullable(),
@@ -270,6 +298,7 @@ export const ROLLING_OUTLINE_CONTRACT: JsonSchemaContract = {
     additionalProperties: false,
     required: [
       "rationale",
+      "entityProposals",
       "volumeId",
       "arcId",
       "volume",
@@ -279,6 +308,42 @@ export const ROLLING_OUTLINE_CONTRACT: JsonSchemaContract = {
       "continuityRisks",
     ],
     properties: {
+      entityProposals: {
+        type: "array",
+        maxItems: 12,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "key",
+            "type",
+            "name",
+            "aliases",
+            "description",
+            "narrativeRole",
+            "rationale",
+          ],
+          properties: {
+            key: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,60}$" },
+            type: {
+              type: "string",
+              enum: [
+                "character",
+                "location",
+                "organization",
+                "item",
+                "rule",
+                "concept",
+              ],
+            },
+            name: { type: "string" },
+            aliases: { type: "array", items: { type: "string" } },
+            description: { type: "string" },
+            narrativeRole: { type: "string" },
+            rationale: { type: "string" },
+          },
+        },
+      },
       rationale: { type: "string" },
       volumeId: { type: ["string", "null"] },
       arcId: { type: ["string", "null"] },
@@ -303,7 +368,8 @@ export const ROLLING_OUTLINE_CONTRACT: JsonSchemaContract = {
             "goal",
             "conflict",
             "outcome",
-            "povName",
+            "pov",
+            "entityRefs",
             "storyTime",
             "hook",
           ],
@@ -313,7 +379,12 @@ export const ROLLING_OUTLINE_CONTRACT: JsonSchemaContract = {
             goal: { type: "string" },
             conflict: { type: "string" },
             outcome: { type: "string" },
-            povName: { type: ["string", "null"] },
+            pov: { anyOf: [entityRefJsonSchema(), { type: "null" }] },
+            entityRefs: {
+              type: "array",
+              maxItems: 30,
+              items: entityRefJsonSchema(),
+            },
             storyTime: { type: ["string", "null"] },
             hook: { type: "string" },
           },
@@ -392,17 +463,33 @@ export const PLANNING_REVIEW_CONTRACT: JsonSchemaContract = {
 
 export function automationValidator<T>(
   schema: z.ZodType<T>,
+  semantic?: (value: T) => readonly string[],
 ): StructuredValidator<T> {
   return (value) => {
     const parsed = schema.safeParse(value);
+    const issues = parsed.success ? (semantic?.(parsed.data) ?? []) : [];
     return parsed.success
-      ? { success: true, data: parsed.data }
+      ? issues.length
+        ? { success: false, issues: [...issues] }
+        : { success: true, data: parsed.data }
       : {
           success: false,
           issues: parsed.error.issues.map(
             (issue) => `${issue.path.join(".")}: ${issue.message}`,
           ),
         };
+  };
+}
+
+function entityRefJsonSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["kind", "id"],
+    properties: {
+      kind: { type: "string", enum: ["existing", "proposed"] },
+      id: { type: "string" },
+    },
   };
 }
 

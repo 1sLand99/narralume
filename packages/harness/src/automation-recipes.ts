@@ -8,7 +8,7 @@ export interface AutomationRecipe {
     | "rolling-outline"
     | "steer-classification"
     | "closing-review";
-  version: 1;
+  version: number;
   steps: readonly RunStepSeed[];
 }
 
@@ -22,6 +22,7 @@ export function buildFoundationRecipe(runId: string): AutomationRecipe {
 export function buildRollingOutlineRecipe(runId: string): AutomationRecipe {
   return recipe(runId, "rolling-outline", [
     ["generate", "outline.generate", 5],
+    ["entities", "outline.entities", 1],
     ["commit", "outline.commit", 1],
   ]);
 }
@@ -52,7 +53,7 @@ function recipe(
 ): AutomationRecipe {
   return {
     name,
-    version: 1,
+    version: name === "rolling-outline" ? 2 : 1,
     steps: definitions.map(([key, kind, maxAttempts], ordinal) => ({
       id: `${runId}:${key}`,
       ordinal,

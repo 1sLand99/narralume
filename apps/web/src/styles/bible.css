@@ -1125,3 +1125,8 @@
   .story-lines__head { flex-direction: column; }
   .story-line-form__fields { grid-template-columns: 1fr; }
 }
+
+.bible-ai__diff[data-operation="create"] dd {
+  grid-template-columns: minmax(0, 1fr);
+  white-space: pre-wrap;
+}

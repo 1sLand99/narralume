@@ -90,6 +90,7 @@ export class DomainError extends Error {
 }
 
 export * from "./canon.js";
+export * from "./entity-identity.js";
 export * from "./document.js";
 export * from "./narrative-state.js";
 export * from "./run.js";

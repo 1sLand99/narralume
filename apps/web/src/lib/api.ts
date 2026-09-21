@@ -803,6 +803,7 @@ export type RunStepKind =
   | "foundation.generate"
   | "foundation.stage"
   | "outline.generate"
+  | "outline.entities"
   | "outline.commit"
   | "steer.classify"
   | "arc.review"
@@ -1038,7 +1039,7 @@ export type SessionActionRequest =
       action: "pause" | "resume" | "cancel";
     }
   | {
-      action: "accept_plan" | "accept_manuscript" | "keep_manuscript";
+      action: "accept_entities" | "accept_plan" | "accept_manuscript" | "keep_manuscript";
       requestId: string;
     }
   | { action: "request_revision"; requestId: string; instruction?: string };

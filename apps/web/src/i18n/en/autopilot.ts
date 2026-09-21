@@ -1,6 +1,15 @@
 import type { autopilot as autopilotZh } from "../zh/autopilot";
 
 export const autopilot: typeof autopilotZh = {
+  entities: {
+    title: "New story elements in the plan",
+    hint: "The plan proposes new characters, places, or other story elements. Review their purpose and rationale. Adoption adds them to the entity library; chapters in this window are created after your decisions.",
+    pending: "Decide each candidate before continuing.",
+    ready: "All candidates are adopted. You can now create this window's chapters.",
+    rejected: "A candidate was rejected. Replan to continue. Adopted entries stay, and the next plan receives the rejection record.",
+    replanHint: "If these story elements do not fit, replan. Adopted entries will remain.",
+    unavailable: "The current candidates are unavailable. Refresh or replan.",
+  },
   page: {
     seal: "创",
     title: "AI Quick Creation",

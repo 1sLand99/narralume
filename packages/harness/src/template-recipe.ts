@@ -33,6 +33,7 @@ const DEFAULT_ATTEMPTS: Readonly<Record<RunStepKind, number>> = {
   "foundation.generate": 5,
   "foundation.stage": 1,
   "outline.generate": 5,
+  "outline.entities": 1,
   "outline.commit": 1,
   "steer.classify": 5,
   "arc.review": 5,

@@ -171,7 +171,7 @@ export function resolveSessionFailure(
     reviews.supersedeRunRevisionProposals(child.id, now);
     automation.markRunProcessed(sessionId, child.id, action, now);
   }
-  if (link?.outlineNodeId) {
+  if (link?.role === "chapter" && link.outlineNodeId) {
     story.updateOutlineStatus(
       session.projectId,
       link.outlineNodeId,
@@ -395,13 +395,14 @@ export function sessionProductProjection(
       ? session.chapterPolicy.origin
       : null,
     approvalMode: session.mode === "autopilot" ? "continuous" : "per_chapter",
-    currentChapter: currentNode
-      ? {
-          id: currentNode.id,
-          title: currentNode.title,
-          runId: session.currentRunId,
-        }
-      : null,
+    currentChapter:
+      currentNode?.kind === "chapter"
+        ? {
+            id: currentNode.id,
+            title: currentNode.title,
+            runId: session.currentRunId,
+          }
+        : null,
     stopReason,
     availableActions,
   };
@@ -438,6 +439,8 @@ export function sessionAvailableActions(
     return ["retry-current", "skip-chapter", "replan", "stop"];
   }
   if (status !== "awaiting_user") return [];
+  if (stopReason === "planning_entities_require_decision")
+    return ["accept_entities", "replan", "cancel"];
   if (stopReason === "child.fatal") {
     return ["retry-current", "skip-chapter", "replan", "stop"];
   }

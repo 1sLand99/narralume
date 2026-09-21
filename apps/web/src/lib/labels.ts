@@ -81,6 +81,7 @@ export function runStepLabel(kind: RunStepKind): string {
     "foundation.generate": "labels.runStepKind.foundationGenerate",
     "foundation.stage": "labels.runStepKind.foundationStage",
     "outline.generate": "labels.runStepKind.outlineGenerate",
+    "outline.entities": "labels.runStepKind.outlineEntities",
     "outline.commit": "labels.runStepKind.outlineCommit",
     "steer.classify": "labels.runStepKind.steerClassify",
     "arc.review": "labels.runStepKind.arcReview",
@@ -577,6 +578,7 @@ export function taskActionLabel(action: string): string {
     resume: "labels.taskAction.resume",
     cancel: "labels.taskAction.cancel",
     accept_plan: "labels.taskAction.acceptPlan",
+    accept_entities: "labels.taskAction.acceptEntities",
     switch_to_manual: "labels.taskAction.switchToManual",
     accept_manuscript: "labels.taskAction.acceptManuscript",
     keep_manuscript: "labels.taskAction.keepManuscript",
@@ -633,6 +635,7 @@ export function stopReasonLabel(reason: string): string {
     revision_limit_reached: "labels.stopReason.revisionLimitReached",
     scene_plan_approval_required:
       "labels.stopReason.scenePlanApprovalRequired",
+    planning_entities_require_decision: "labels.stopReason.planningEntitiesRequireDecision",
     settlement_conflict_requires_resolution:
       "labels.stopReason.settlementConflictRequiresResolution",
     request_start_timeout: "labels.stopReason.requestStartTimeout",

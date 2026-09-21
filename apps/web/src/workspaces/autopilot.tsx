@@ -16,6 +16,7 @@ import { ConfirmDialog } from "../components/confirm-dialog";
 import { NumberField } from "../components/number-field";
 import { PageBand } from "../components/page-band";
 import { ProjectRequiredState } from "../components/project-required-state";
+import { PlanningEntities } from "./autopilot/planning-entities";
 import { Skeleton } from "../components/skeleton";
 import { getLocale, translate, useI18n, type MessageKey } from "../i18n";
 import { formatTime, shortId } from "../lib/fmt";
@@ -749,9 +750,11 @@ function CommandDeck({
           </div>
         ) : null}
         {(detail?.availableActions ?? []).includes("request_revision") ? <SessionRevisionRequest pending={actionPending} onSubmit={(requestId, instruction) => onControl({ action: "request_revision", requestId, instruction })} /> : null}
-        {resolutionActions.length ? <div className="autopilot__failure-actions"><p>{t("autopilot.deck.interrupted")}</p>{resolutionActions.map((action) => <button key={action} type="button" className="btn" disabled={actionPending} onClick={() => onResolve(action)}>{taskActionLabel(action)}</button>)}</div> : null}
+        {resolutionActions.length ? <div className="autopilot__failure-actions"><p>{t(detail?.stopReason === "planning_entities_require_decision" ? "autopilot.entities.replanHint" : "autopilot.deck.interrupted")}</p>{resolutionActions.map((action) => <button key={action} type="button" className="btn" disabled={actionPending} onClick={() => onResolve(action)}>{taskActionLabel(action)}</button>)}</div> : null}
         {actionError ? <ErrorNote error={actionError} title={t("autopilot.deck.actionErrorTitle")} /> : null}
       </div>
+
+      {running?.currentRunId && detail?.availableActions.includes("accept_entities") ? <PlanningEntities projectId={running.projectId} runId={running.currentRunId} pending={actionPending} onContinue={() => onControl({ action: "accept_entities", requestId: `${running.currentRunId}:accept_entities` })} /> : null}
 
       {blockingReview ? (
         <section className="autopilot__blocking-review" aria-label={t("autopilot.blockingReview.title")}>

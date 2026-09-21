@@ -52,6 +52,7 @@
   max-width: 420px;
 }
 .autopilot__compass-body {
+  min-width: 0;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -766,5 +767,18 @@
 @media (max-width: 1000px) {
   .autopilot__setup {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .autopilot__compass {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .autopilot__compass-face {
+    max-width: 140px;
+    justify-self: center;
+  }
+  .autopilot__leg {
+    flex-wrap: wrap;
   }
 }

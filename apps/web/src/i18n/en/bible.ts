@@ -133,6 +133,8 @@ export const bible: typeof bibleZh = {
     editTarget: "Edit target",
     name: "Name",
     aliases: "Aliases",
+    attributes: "Story details",
+    narrativeRole: "Narrative role",
     status: "Status",
     type: "Type",
     parent: "Parent node",

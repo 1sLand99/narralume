@@ -19,10 +19,12 @@ import {
   getRunDetail,
   startCanonCandidate,
   type CanonCandidateSetDto,
+  type CanonEntity,
   type CanonSpread,
   type NarrativeRun,
 } from "../../lib/api";
 import { projectWorkspacePath } from "../../lib/project-route";
+import { entityTypeLabel } from "../../lib/labels";
 import { useServerEvents } from "../../lib/sse";
 
 interface CanonCandidatePanelProps {
@@ -196,7 +198,7 @@ function CanonCandidatePanelView({
 
       <div className="bible-ai__sets">
         {visibleSets.map((set) => (
-          <CandidateSet key={set.id} projectId={projectId} value={set} />
+          <CanonCandidateSetReview key={set.id} projectId={projectId} value={set} />
         ))}
       </div>
     </section>
@@ -228,12 +230,14 @@ function RunNotice({
   );
 }
 
-function CandidateSet({
+export function CanonCandidateSetReview({
   projectId,
   value,
+  disableApply = false,
 }: {
   projectId: string;
   value: CanonCandidateSetDto;
+  disableApply?: boolean;
 }) {
   const { t } = useI18n();
   return (
@@ -268,6 +272,7 @@ function CandidateSet({
             projectId={projectId}
             set={value}
             item={item}
+            disableApply={disableApply}
           />
         ))}
       </div>
@@ -279,10 +284,12 @@ function CandidateItem({
   projectId,
   set,
   item,
+  disableApply,
 }: {
   projectId: string;
   set: CanonCandidateSetDto;
   item: CanonCandidateSetDto["items"][number];
+  disableApply: boolean;
 }) {
   const queryClient = useQueryClient();
   const { t } = useI18n();
@@ -315,14 +322,13 @@ function CandidateItem({
       </div>
       <p>{item.rationale}</p>
       {item.diff.length ? (
-        <dl className="bible-ai__diff">
+        <dl className="bible-ai__diff" data-operation={item.operation}>
           {item.diff.map((field) => (
             <div key={field.field}>
               <dt>{fieldLabel(field.field)}</dt>
               <dd>
-                <del>{printValue(field.before)}</del>
-                <span aria-hidden="true">→</span>
-                <ins>{printValue(field.after)}</ins>
+                {item.operation !== "create" ? <><del>{printValue(field.before, field.field, set.spread)}</del><span aria-hidden="true">→</span></> : null}
+                <ins>{printValue(field.after, field.field, set.spread)}</ins>
               </dd>
             </div>
           ))}
@@ -360,7 +366,7 @@ function CandidateItem({
           <button
             type="button"
             className="btn btn--primary"
-            disabled={decisionMutation.isPending}
+            disabled={decisionMutation.isPending || disableApply}
             onClick={apply}
           >
             <Check size={12} />
@@ -441,6 +447,11 @@ function fieldLabel(field: string): string {
     endingDirection: "bible.fields.endingDirection",
     currentFocus: "bible.fields.currentFocus",
     description: "bible.fields.description",
+    name: "bible.fields.name",
+    aliases: "bible.fields.aliases",
+    type: "bible.fields.type",
+    attributes: "bible.fields.attributes",
+    narrativeRole: "bible.fields.narrativeRole",
     title: "bible.fields.title",
     summary: "bible.fields.summary",
     goal: "bible.fields.goal",
@@ -452,10 +463,15 @@ function fieldLabel(field: string): string {
   return key ? translate(getLocale(), key) : field;
 }
 
-function printValue(value: unknown): string {
+function printValue(value: unknown, field?: string, spread?: CanonSpread): string {
   if (value === null || value === undefined || value === "")
     return translate(getLocale(), "bible.candidates.unfilled");
-  if (typeof value === "string") return value;
+  if (typeof value === "string") {
+    if (field === "type" && spread === "entities" && ["character", "location", "organization", "item", "rule", "concept"].includes(value)) return entityTypeLabel(value as CanonEntity["type"]);
+    return value;
+  }
+  if (Array.isArray(value)) return value.length ? value.map((item) => printValue(item)).join(translate(getLocale(), "bible.editor.listSeparator")) : translate(getLocale(), "bible.candidates.unfilled");
+  if (field === "attributes" && typeof value === "object") return Object.entries(value).map(([key, entry]) => `${fieldLabel(key)}: ${printValue(entry)}`).join("\n");
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   try {
     return JSON.stringify(value);

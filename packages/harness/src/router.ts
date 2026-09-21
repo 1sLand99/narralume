@@ -99,6 +99,23 @@ export function routeRun(
   }
 
   if (
+    next.kind === "outline.commit" &&
+    steps.some(
+      (step) =>
+        step.kind === "outline.entities" &&
+        step.status === "succeeded" &&
+        typeof step.outputArtifact?.candidateSetId === "string",
+    ) &&
+    run.policy.entityCandidatesApproved !== true
+  ) {
+    return {
+      type: "await_user",
+      reason: "planning_entities_require_decision",
+      stepId: next.id,
+    };
+  }
+
+  if (
     next.kind === "draft.generate" &&
     run.policy.planningMode === "confirm" &&
     run.policy.planApproved !== true

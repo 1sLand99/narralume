@@ -1,4 +1,7 @@
-import { requireCurrentChapterOutline } from "@narralume/narrative";
+import {
+  requireCurrentChapterOutline,
+  requirePlanningEntitiesReady,
+} from "@narralume/narrative";
 import {
   AutopilotSessionDetailSchema,
   AutopilotSessionCreatedSchema,
@@ -494,6 +497,7 @@ export function registerAutomationRoutes(
       const { sessionId } = SessionParamsSchema.parse(request.params);
       const input = SessionActionRequestSchema.parse(request.body);
       if (
+        input.action === "accept_entities" ||
         input.action === "accept_plan" ||
         input.action === "accept_manuscript" ||
         input.action === "keep_manuscript"
@@ -515,7 +519,32 @@ export function registerAutomationRoutes(
 
           const session = automation.requireSession(sessionId);
           const now = new Date().toISOString();
-          if (input.action === "accept_plan") {
+          if (input.action === "accept_entities") {
+            const child = session.currentRunId
+              ? runs.getSnapshot(session.currentRunId)
+              : null;
+            if (
+              !child ||
+              session.status !== "awaiting_user" ||
+              child.run.status !== "awaiting_user" ||
+              child.run.cancelRequested ||
+              latestRunReason(child) !== "planning_entities_require_decision"
+            ) {
+              throw new AutomationServiceError(
+                "planning.entities.not_awaiting",
+                "The session is not waiting for planning entity decisions",
+                409,
+              );
+            }
+            requirePlanningEntitiesReady(database, child);
+            runs.mergePolicy(
+              child.run.id,
+              { entityCandidatesApproved: true },
+              now,
+            );
+            runs.resume(child.run.id, now);
+            automation.resumeSession(sessionId, now);
+          } else if (input.action === "accept_plan") {
             if (!session.currentRunId) {
               throw new AutomationServiceError(
                 "autopilot.chapter.none",

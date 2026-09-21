@@ -43,7 +43,8 @@ export function runProductProjection(
       ?.outputArtifact ?? null;
   const reason = latestAwaitReason(snapshot);
   const foundation = succeeded("foundation.stage");
-  const canonCandidate = succeeded("canon.stage");
+  const canonCandidate =
+    succeeded("canon.stage") ?? succeeded("outline.entities");
   const edit = succeeded("edit.stage");
   const cocreate = succeeded("cocreate.stage");
   const adoption = succeeded("adoption.commit");
@@ -78,7 +79,10 @@ export function runProductProjection(
       availableActions = ["request_revision", "cancel"];
     } else {
       // 未知等待原因一律允许恢复：等待本身已持久化，resume 只是解除停靠。
-      availableActions = ["resume", "cancel"];
+      availableActions =
+        reason === "planning_entities_require_decision"
+          ? ["cancel"]
+          : ["resume", "cancel"];
     }
   } else if (snapshot.run.status === "paused") {
     availableActions = ["resume", "cancel"];

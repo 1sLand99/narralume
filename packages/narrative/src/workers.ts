@@ -229,6 +229,48 @@ export class ChapterWorkerSuite {
         }
       : null;
     const documentReview = this.documentReviewTarget(snapshot);
+    const plannedEntityIds = [
+      ...new Set([
+        ...(Array.isArray(target.metadata.plannedEntityIds)
+          ? target.metadata.plannedEntityIds.filter(
+              (id): id is string => typeof id === "string",
+            )
+          : []),
+        ...(target.povEntityId ? [target.povEntityId] : []),
+      ]),
+    ];
+    const plannedEntities = plannedEntityIds.map((id) => {
+      const entity = this.canon.getEntity(run.projectId, id);
+      if (!entity || entity.status !== "active")
+        throw permanent(
+          "planning.entities.conflict",
+          "A chapter entity is no longer available; update the chapter plan",
+        );
+      return entity;
+    });
+    const entitySources = (authorView: boolean): ContextSource[] =>
+      plannedEntities.map((entity) => ({
+        id: `planned-entity:${entity.id}`,
+        kind: "canon",
+        label: authorView
+          ? "本章实体资料（作者参考，剧情功能不代表已发生事件）"
+          : "本章实体身份（不代表 POV 已知）",
+        content: JSON.stringify({
+          id: entity.id,
+          type: entity.type,
+          name: entity.name,
+          aliases: entity.aliases,
+          ...(authorView
+            ? { description: entity.description, attributes: entity.attributes }
+            : {}),
+        }),
+        authority: "confirmed",
+        priority: 97,
+        required: true,
+        compressible: false,
+        sourceType: "canon_entity",
+        sourceId: entity.id,
+      }));
     const sources: ContextSource[] = [
       {
         id: `task:${target.id}`,
@@ -376,6 +418,7 @@ export class ChapterWorkerSuite {
     const authorStoryStatePacket = this.storyState.build({
       projectId: run.projectId,
       audience: "author",
+      focalEntityIds: plannedEntityIds,
       targetOutlineNodeId: target.id,
     });
     const draftStoryStatePacket = target.povEntityId
@@ -383,6 +426,7 @@ export class ChapterWorkerSuite {
           projectId: run.projectId,
           audience: "character",
           characterId: target.povEntityId,
+          focalEntityIds: plannedEntityIds,
           targetOutlineNodeId: target.id,
         })
       : authorStoryStatePacket;
@@ -483,9 +527,7 @@ export class ChapterWorkerSuite {
       queryEmbedding.degradation,
     );
     const retrievalHits = this.retrieval.search(run.projectId, retrievalQuery, {
-      entityIds: [target.povEntityId].filter((value): value is string =>
-        Boolean(value),
-      ),
+      entityIds: plannedEntityIds,
       limit: 8,
       rerank: false,
       ...(queryEmbedding.vectors[0]
@@ -527,7 +569,11 @@ export class ChapterWorkerSuite {
       128_000,
     );
     const inventoryDigest = sha256(
-      stableContextInventory([...sources, ...authorStoryStatePacket.sources]),
+      stableContextInventory([
+        ...sources,
+        ...entitySources(true),
+        ...authorStoryStatePacket.sources,
+      ]),
     );
     const purposeRequests = {
       "scene-plan": 3_000,
@@ -568,7 +614,11 @@ export class ChapterWorkerSuite {
       ].includes(purpose)
         ? authorStoryStatePacket
         : draftStoryStatePacket;
-      const purposeSources = [...sources, ...statePacket.sources];
+      const purposeSources = [
+        ...sources,
+        ...entitySources(statePacket === authorStoryStatePacket),
+        ...statePacket.sources,
+      ];
       const purposeInventoryDigest = sha256(
         stableContextInventory(purposeSources),
       );

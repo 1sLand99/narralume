@@ -661,6 +661,7 @@ function assistantModel(
 function scriptedAutomationValue(purpose: string): unknown {
   if (purpose === "rolling-outline") {
     return {
+      entityProposals: [],
       rationale: "从熄灯异象逐步逼近代价。",
       volume: {
         title: "第一卷 雾港",
@@ -681,7 +682,8 @@ function scriptedAutomationValue(purpose: string): unknown {
           goal: "进入灯塔",
           conflict: "父亲阻拦",
           outcome: "发现空椅子",
-          povName: "林昼",
+          pov: null,
+          entityRefs: [],
           storyTime: "第一夜",
           hook: "谁被忘了",
         },
@@ -691,7 +693,8 @@ function scriptedAutomationValue(purpose: string): unknown {
           goal: "确认失踪者",
           conflict: "档案被改写",
           outcome: "找到旧录音",
-          povName: "林昼",
+          pov: null,
+          entityRefs: [],
           storyTime: "第二日",
           hook: "录音喊出她的名字",
         },

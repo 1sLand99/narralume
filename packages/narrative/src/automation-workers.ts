@@ -41,7 +41,13 @@ import {
   STEER_CLASSIFICATION_CONTRACT,
   SteerClassificationResultSchema,
 } from "./automation-schemas.js";
-import { fingerprint } from "./canon-candidate-context.js";
+import {
+  outlineFingerprint,
+  planningEntityIssues,
+  planningRejections,
+  requirePlanningEntitiesReady,
+  stagePlanningEntities,
+} from "./planning-entities.js";
 import {
   authoredInstructions,
   instructionsFor,
@@ -103,6 +109,7 @@ export class AutomationWorkerSuite {
       "foundation.generate": this.worker(this.generateFoundation.bind(this)),
       "foundation.stage": this.worker(this.stageFoundation.bind(this)),
       "outline.generate": this.worker(this.generateOutline.bind(this)),
+      "outline.entities": this.worker(this.stageOutlineEntities.bind(this)),
       "outline.commit": this.worker(this.commitOutline.bind(this)),
       "steer.classify": this.worker(this.classifySteer.bind(this)),
       "arc.review": this.worker(this.reviewArc.bind(this)),
@@ -269,6 +276,9 @@ export class AutomationWorkerSuite {
     const compass = this.automation.getCompass(session.projectId);
     const intent = this.story.getAuthorIntent(session.projectId);
     const outline = this.story.listOutline(session.projectId);
+    const entities = this.canon.listEntities(session.projectId, {
+      includeRetired: true,
+    });
     const steers = this.automation
       .listSteers(sessionId)
       .filter(
@@ -349,6 +359,30 @@ export class AutomationWorkerSuite {
         chapterSummaries: this.state.listLatestSummaries(project.id, "chapter"),
         targetOutlineNodeId: latestChapter?.id ?? null,
       }),
+      {
+        id: "planning-entities",
+        kind: "canon",
+        label: "实体目录与作者拒绝记录",
+        authority: "confirmed",
+        priority: 98,
+        required: true,
+        compressible: false,
+        sourceType: "canon_entities",
+        sourceId: project.id,
+        content: JSON.stringify({
+          entities: entities.map(
+            ({ id, type, name, aliases, description, status }) => ({
+              id,
+              type,
+              name,
+              aliases,
+              description: description?.slice(0, 240) ?? null,
+              status,
+            }),
+          ),
+          rejectedProposals: planningRejections(this.database, project.id),
+        }),
+      },
       ...continuationState.sources,
       ...[
         ...this.state.listLatestSummaries(project.id, "arc"),
@@ -411,6 +445,8 @@ export class AutomationWorkerSuite {
             "计划必须承接已提交章节，兑现指南针，尊重作者锁定意图与 steer。",
             "指南针 longLines 的 development 是作者维护的阶段记录：scopeNodeId 指定当前卷或弧，stageGoal 是阶段目标，progress 是作者对进展的记录，openPromises 是尚未兑现的承诺，nextDevelopment 是后续方向。结合当前阶段选择本窗口推进的线，不要求每条线每章出场，也不为完成窗口而全部解决。evidenceChapterIds 指向已定稿章节；核对摘要和事实，不把计划目标或缺少证据的进展记录变成已经发生的事实。",
             "每章要有目标、阻力、转折、结果与结尾钩子；结果必须推动因果链。",
+            "先判断既有角色、关系变化与场景能否承担剧情功能；新人物、地点或组织只在本窗口确有需要时提出，entityProposals 可以为空，不设新增数量指标，也不要因为初始名单有限就强迫每段剧情围绕同几个人。每项提案说明 narrativeRole 和 rationale，尊重拒绝记录，不换名重复被拒绝的功能。",
+            "章节 pov 和 entityRefs 显式使用 {kind: existing, id: 实体ID} 或 {kind: proposed, id: 提案key}；POV 只能引用人物。复用目录里的稳定 ID，不按名字猜测，不重复已有名字或别名；退役条目不可引用。每项提案必须服务本窗口至少一章，角色描述和剧情功能不是已经发生的事件。",
             "运行剩余章数只表示本次委托的工作量，不表示故事弧、卷或全书必须结束。全书结局只由作者意图与已建立的叙事进展决定，不为用完窗口而提前收束。",
             "volumeId/arcId 填写要继续的现有卷/弧 ID；只有剧情进入新阶段时才填 null 创建新卷/弧。一弧可以跨多个窗口，换窗口不等于换弧。继续已有结构时保留其目标和已经发生的结果。arcId 必须属于选定的 volumeId。",
             "准确输出本次窗口要求的章节数量。nextArc 是可调整的远期骨架，不能当作已发生的事实；复盘建议需评估后落实到本次计划，不得当作作者命令或正典。",
@@ -420,6 +456,8 @@ export class AutomationWorkerSuite {
             "The plan must continue from committed chapters, honor the compass, and respect the author's locked intent and steers.",
             "Each longLines.development entry is an author-maintained stage record: scopeNodeId identifies its volume or arc, stageGoal is the current objective, progress is the author's progress note, openPromises lists outstanding promises, and nextDevelopment gives future direction. Select lines relevant to this window; not every line must appear in every chapter or resolve by the window's end. evidenceChapterIds reference committed chapters. Check summaries and facts; planned goals and unsupported progress notes are not established events.",
             "Each chapter needs a goal, resistance, a turn, an outcome, and a closing hook; outcomes must advance the causal chain.",
+            "First consider whether existing characters, changing relationships, and settings can serve the story. Propose a new character, location, or organization only when this window needs one. entityProposals may be empty: there is no quota, and the initial cast need not carry every future conflict. Explain each narrativeRole and rationale, honor rejected proposals, and do not rename a rejected idea to repeat it.",
+            "Chapter pov and entityRefs must use {kind: existing, id: entity ID} or {kind: proposed, id: proposal key}. POV must reference a character. Reuse stable catalog IDs, never infer identity from a name or duplicate an existing name or alias. Retired entries cannot be referenced. Every proposal must serve at least one chapter in this window. Descriptions and narrative roles are not events that have already occurred.",
             "Remaining run chapters describe this assignment's workload, not the end of an arc, volume, or book. Resolve the book only when author intent and established narrative progress call for it, never just to finish a window.",
             "Set volumeId/arcId to the existing volume/arc to continue, or null to create one only when the story enters a new phase. An arc may span several windows. Preserve existing goals and established outcomes. arcId must belong to volumeId.",
             "Return exactly the requested window chapter count. nextArc is a revisable future outline, not a past event. Evaluate retrospective suggestions and incorporate useful ones; they are neither author commands nor canon.",
@@ -435,7 +473,12 @@ export class AutomationWorkerSuite {
         maxOutputTokens: outputReserve,
       },
       ROLLING_OUTLINE_CONTRACT,
-      automationValidator(RollingOutlineProposalSchema),
+      automationValidator(RollingOutlineProposalSchema, (plan) =>
+        planningEntityIssues(
+          { ...plan, chapters: plan.chapters.slice(0, windowSize) },
+          entities,
+        ),
+      ),
       signal,
     );
     const value = {
@@ -459,40 +502,51 @@ export class AutomationWorkerSuite {
     };
   }
 
+  private async stageOutlineEntities(
+    snapshot: RunSnapshot,
+    step: NarrativeRunStep,
+    signal: AbortSignal,
+  ): Promise<StepExecutionResult> {
+    const output = this.database.transaction(() => {
+      requireActiveRunCommit(
+        this.database,
+        snapshot.run.id,
+        snapshot.run.projectId,
+        signal,
+      );
+      return stagePlanningEntities(
+        this.database,
+        snapshot,
+        step.id,
+        this.now().toISOString(),
+      );
+    });
+    return {
+      artifactKind: "planning-entity-candidates",
+      output,
+      usage: zeroUsage(),
+    };
+  }
+
   private async commitOutline(
     snapshot: RunSnapshot,
+    _step: NarrativeRunStep,
+    signal: AbortSignal,
   ): Promise<StepExecutionResult> {
     const artifact = requiredArtifact(snapshot, "outline.generate");
     const plan = RollingOutlineProposalSchema.parse(artifact);
-    const baseline =
-      isRecord(artifact) &&
-      isRecord(artifact.generation) &&
-      typeof artifact.generation.outlineFingerprint === "string"
-        ? artifact.generation.outlineFingerprint
-        : null;
     const sessionId = policyString(snapshot.run.policy, "sessionId");
     const session = this.automation.requireSession(sessionId);
     const now = this.now().toISOString();
     const result = this.database.transaction(() => {
+      requireActiveRunCommit(
+        this.database,
+        snapshot.run.id,
+        snapshot.run.projectId,
+        signal,
+      );
+      const bindings = requirePlanningEntitiesReady(this.database, snapshot);
       const outline = this.story.listOutline(session.projectId);
-      if (
-        !isRecord(artifact.generation) ||
-        artifact.generation.compassVersion !==
-          (this.automation.getCompass(session.projectId)?.version ?? null)
-      ) {
-        throw permanent(
-          "compass.baseline.conflict",
-          "The story compass changed after rolling planning; generate a new plan from the current direction",
-        );
-      }
-      // 生成后大纲若被人工编辑（骨架弧详情、结构、章节变动），旧方案必须显式失效，
-      // 不能用旧方案无条件覆盖作者的修改或按漂移后的结构追加章节。
-      if (!baseline || outlineFingerprint(outline) !== baseline) {
-        throw permanent(
-          "outline.baseline.conflict",
-          "The outline was changed by other edits after rolling planning; this plan is stale, please plan again",
-        );
-      }
       const root = outline.find((node) => node.kind === "book");
       if (!root)
         throw permanent(
@@ -582,7 +636,10 @@ export class AutomationWorkerSuite {
           }),
         );
       }
-      const entities = this.canon.listEntities(session.projectId);
+      const resolveEntity = (ref: {
+        kind: "existing" | "proposed";
+        id: string;
+      }) => (ref.kind === "existing" ? ref.id : bindings.get(ref.id)!);
       const existingChapters = this.story.listOutlineChildren(
         session.projectId,
         arc.id,
@@ -595,13 +652,6 @@ export class AutomationWorkerSuite {
           chapterIds.push(existing.id);
           return;
         }
-        const pov = chapter.povName
-          ? entities.find(
-              (entity) =>
-                entity.name === chapter.povName ||
-                entity.aliases.includes(chapter.povName!),
-            )
-          : null;
         const node = this.story.insertOutlineNode(
           createOutlineNode({
             id,
@@ -614,12 +664,20 @@ export class AutomationWorkerSuite {
             goal: chapter.goal,
             conflict: chapter.conflict,
             outcome: chapter.outcome,
-            povEntityId: pov?.id ?? null,
+            povEntityId: chapter.pov ? resolveEntity(chapter.pov) : null,
             storyTime: chapter.storyTime,
             metadata: {
               hook: chapter.hook,
               sourceRunId: snapshot.run.id,
               planningRationale: plan.rationale,
+              plannedEntityIds: [
+                ...new Set(
+                  [
+                    ...chapter.entityRefs,
+                    ...(chapter.pov ? [chapter.pov] : []),
+                  ].map(resolveEntity),
+                ),
+              ],
             },
             now,
           }),
@@ -1016,31 +1074,6 @@ function zeroUsage(): RunBudgetUsage {
 
 function sha256(value: string): string {
   return sha256Hex(value);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-/** 大纲结构指纹：覆盖节点身份、层级、排序、详情与 updatedAt，任何人工编辑都会改变它。 */
-function outlineFingerprint(outline: readonly OutlineNode[]): string {
-  return fingerprint(
-    outline
-      .map((node) => ({
-        id: node.id,
-        parentId: node.parentId,
-        kind: node.kind,
-        ordinal: node.ordinal,
-        title: node.title,
-        summary: node.summary,
-        goal: node.goal,
-        conflict: node.conflict,
-        outcome: node.outcome,
-        status: node.status,
-        updatedAt: node.updatedAt,
-      }))
-      .sort((a, b) => a.id.localeCompare(b.id)),
-  );
 }
 
 function permanent(code: string, message: string) {

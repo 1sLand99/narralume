@@ -159,7 +159,7 @@ describe("automation API", () => {
       expect(
         runs
           .getSnapshot(staleRun)
-          .steps.find((step) => step.kind === "outline.commit")?.error?.code,
+          .steps.find((step) => step.status === "failed")?.error?.code,
       ).toBe("compass.baseline.conflict");
       expect(story.listOutline(projectId)).toEqual(previousOutline);
       expect(JSON.stringify(requests[0]!.messages)).toContain(
@@ -254,9 +254,8 @@ describe("automation API", () => {
     const baseline = story.listOutline(projectId);
     expect(await finishRun(app, projectId, runId)).toBe("failed");
     expect(
-      runs
-        .getSnapshot(runId)
-        .steps.find((step) => step.kind === "outline.commit")?.error?.code,
+      runs.getSnapshot(runId).steps.find((step) => step.status === "failed")
+        ?.error?.code,
     ).toBe("outline.baseline.conflict");
     expect(story.listOutline(projectId)).toEqual(baseline);
   });
@@ -581,7 +580,7 @@ describe("automation API", () => {
     expect(
       new SqliteRunRepository(database)
         .getSnapshot(runId)
-        .steps.find((step) => step.kind === "outline.commit")?.error?.code,
+        .steps.find((step) => step.status === "failed")?.error?.code,
     ).toBe("outline.structure.invalid");
     expect(story.listOutline(projectId)).toEqual(before);
   });
@@ -2622,6 +2621,7 @@ function scriptedValue(purpose: string, request?: unknown): unknown {
   }
   if (purpose === "rolling-outline") {
     return {
+      entityProposals: [],
       volumeId: null,
       arcId: null,
       rationale: "从熄灯异象逐步逼近代价。",
@@ -2644,7 +2644,8 @@ function scriptedValue(purpose: string, request?: unknown): unknown {
           goal: "进入灯塔",
           conflict: "父亲阻拦",
           outcome: "发现空椅子",
-          povName: "林昼",
+          pov: null,
+          entityRefs: [],
           storyTime: "第一夜",
           hook: "谁被忘了",
         },
@@ -2654,7 +2655,8 @@ function scriptedValue(purpose: string, request?: unknown): unknown {
           goal: "确认失踪者",
           conflict: "档案被改写",
           outcome: "找到旧录音",
-          povName: "林昼",
+          pov: null,
+          entityRefs: [],
           storyTime: "第二日",
           hook: "录音喊出她的名字",
         },

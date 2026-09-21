@@ -101,7 +101,16 @@ export class SqliteCanonRepository {
   }
 
   countEntityReferences(id: string): number {
-    return totalReferenceCount(this.database, "canon_entities", id);
+    const planned = this.database.raw
+      .prepare(
+        `
+      SELECT count(*) AS count FROM outline_nodes, json_each(outline_nodes.metadata_json, '$.plannedEntityIds') AS ref WHERE ref.value = ?
+    `,
+      )
+      .get(id) as { count: number };
+    return (
+      totalReferenceCount(this.database, "canon_entities", id) + planned.count
+    );
   }
 
   deleteEntity(projectId: string, id: string): boolean {

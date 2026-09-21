@@ -1756,6 +1756,22 @@ export class DeliveryService {
     }
     for (const source of bundle.outline) {
       const nodeId = nodeMap.get(stringField(source, "id") ?? "");
+      const metadata = objectField(source, "metadata");
+      if (nodeId && Array.isArray(metadata.plannedEntityIds)) {
+        this.story.updateOutlineDetails(
+          projectId,
+          nodeId,
+          {
+            metadata: {
+              ...metadata,
+              plannedEntityIds: stringArray(metadata.plannedEntityIds)
+                .map((id) => entityMap.get(id))
+                .filter((id): id is string => Boolean(id)),
+            },
+          },
+          now,
+        );
+      }
       const povEntityId = entityMap.get(
         stringField(source, "povEntityId") ?? "",
       );

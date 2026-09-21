@@ -49,6 +49,7 @@ export const RunStepKindSchema = z.enum([
   "foundation.generate",
   "foundation.stage",
   "outline.generate",
+  "outline.entities",
   "outline.commit",
   "steer.classify",
   "arc.review",

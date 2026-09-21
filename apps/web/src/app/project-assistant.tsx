@@ -1332,6 +1332,7 @@ const PHASE_LABEL_KEYS: Record<string, MessageKey> = {
   "canon.stage": "assistant.phase.canonStage",
   "foundation.generate": "assistant.phase.foundationGenerate",
   "outline.generate": "assistant.phase.outlineGenerate",
+  "outline.entities": "labels.runStepKind.outlineEntities",
   foundation: "assistant.phase.foundation",
   outline: "assistant.phase.outline",
   writing: "assistant.phase.writing",

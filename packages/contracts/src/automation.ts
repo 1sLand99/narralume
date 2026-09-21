@@ -308,7 +308,12 @@ export const SessionActionRequestSchema = z.discriminatedUnion("action", [
     .strict(),
   z
     .object({
-      action: z.enum(["accept_plan", "accept_manuscript", "keep_manuscript"]),
+      action: z.enum([
+        "accept_entities",
+        "accept_plan",
+        "accept_manuscript",
+        "keep_manuscript",
+      ]),
       requestId: IdSchema,
     })
     .strict(),
@@ -372,6 +377,7 @@ export const AutopilotSessionDetailSchema = z.object({
       "resume",
       "cancel",
       "accept_plan",
+      "accept_entities",
       "accept_manuscript",
       "keep_manuscript",
       "request_revision",

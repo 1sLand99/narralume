@@ -8,6 +8,7 @@ import {
   createCanonEntity,
   createCanonFact,
   createOutlineNode,
+  entityNamesOverlap,
   type CanonEntity,
   type CanonFact,
   type Foreshadow,
@@ -18,12 +19,17 @@ import {
   SqliteCanonRepository,
   SqliteNarrativeStateRepository,
   SqliteReviewRepository,
+  SqliteRunRepository,
   SqliteStoryRepository,
   type CanonChangeSetView,
   type NarrativeDatabase,
 } from "@narralume/persistence";
 
 import { fingerprint, readCanonSpread } from "./canon-candidate-context.js";
+import {
+  PlanningEntityError,
+  requirePlanningBaseline,
+} from "./planning-entities.js";
 import {
   CanonCandidateChangesSchema,
   type CanonCandidateChanges,
@@ -133,6 +139,8 @@ export class CanonCandidateService {
 
     this.database.transaction(() => {
       const now = this.now().toISOString();
+      if (input.action === "apply")
+        this.requireCurrentPlanningSource(changeSet);
       const result =
         input.action === "apply"
           ? this.applyItem(input.projectId, changeSet, changes.data, item, now)
@@ -163,6 +171,19 @@ export class CanonCandidateService {
         .listCanonItemDecisions(changeSet.id)
         .map((decision) => [decision.itemId, decision]),
     );
+    let stale = changes.baseFingerprint !== current.fingerprint;
+    if (
+      new SqliteRunRepository(this.database).getRun(changeSet.runId)?.recipe ===
+      "rolling-outline"
+    ) {
+      try {
+        this.requireCurrentPlanningSource(changeSet);
+        stale = false;
+      } catch (error) {
+        if (!(error instanceof PlanningEntityError)) throw error;
+        stale = true;
+      }
+    }
     return CanonCandidateSetSchema.parse({
       id: changeSet.id,
       projectId: changeSet.projectId,
@@ -173,7 +194,7 @@ export class CanonCandidateService {
       summary: changes.summary,
       baseFingerprint: changes.baseFingerprint,
       currentFingerprint: current.fingerprint,
-      stale: changes.baseFingerprint !== current.fingerprint,
+      stale,
       status: changeSet.status,
       items: changes.items.map((item) => {
         const decision = decisions.get(item.id);
@@ -191,6 +212,22 @@ export class CanonCandidateService {
       createdAt: changeSet.createdAt,
       decidedAt: changeSet.decidedAt,
     });
+  }
+
+  private requireCurrentPlanningSource(changeSet: CanonChangeSetView): void {
+    const runs = new SqliteRunRepository(this.database);
+    const run = runs.getRun(changeSet.runId);
+    if (run?.recipe !== "rolling-outline") return;
+    if (
+      run.cancelRequested ||
+      ["cancelled", "failed", "completed"].includes(run.status)
+    ) {
+      throw new PlanningEntityError(
+        "planning.entities.stale",
+        "This planning run is no longer active; generate a new plan",
+      );
+    }
+    requirePlanningBaseline(this.database, runs.getSnapshot(run.id));
   }
 
   private resultFor(projectId: string, changeSetId: string, itemId: string) {
@@ -441,11 +478,17 @@ export class CanonCandidateService {
       if (
         this.canon
           .listEntities(projectId, { includeRetired: true })
-          .some((entity) => entity.type === type && entity.name === name)
+          .some((entity) =>
+            entityNamesOverlap(entity, {
+              type,
+              name,
+              aliases: stringArray(item.after!.aliases),
+            }),
+          )
       ) {
         throw new CanonCandidateError(
           "canon_candidate.item.conflict",
-          "The canon has changed since the candidates were generated (an entity with the same type and name already exists); keep the current content and regenerate candidates",
+          "An entity of the same type already uses this name or alias; keep the current content and regenerate candidates",
           409,
         );
       }
