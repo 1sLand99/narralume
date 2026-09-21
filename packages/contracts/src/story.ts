@@ -244,6 +244,63 @@ export const UpdateOutlineNodeRequestSchema = z.object({
   metadata: JsonObjectSchema.optional(),
   expectedUpdatedAt: TimestampSchema,
 });
+const ReorderOutlineChangeSchema = z.object({
+  kind: z.literal("reorder"),
+  parentId: IdSchema,
+  nodes: z
+    .array(z.object({ id: IdSchema, expectedUpdatedAt: TimestampSchema }))
+    .min(1)
+    .max(10_000),
+});
+const MoveOutlineChangeSchema = z.object({
+  kind: z.literal("move"),
+  nodeId: IdSchema,
+  parentId: IdSchema,
+  beforeNodeId: IdSchema.nullable(),
+  expectedUpdatedAt: TimestampSchema,
+  expectedParentUpdatedAt: TimestampSchema,
+});
+export const OutlineChangeRequestSchema = z.discriminatedUnion("kind", [
+  ReorderOutlineChangeSchema,
+  MoveOutlineChangeSchema,
+]);
+export type OutlineChangeRequest = z.infer<typeof OutlineChangeRequestSchema>;
+export const ApplyOutlineChangeRequestSchema = z.object({
+  change: OutlineChangeRequestSchema,
+  previewFingerprint: z.string().min(1),
+});
+export const OutlineChangePreviewSchema = z.object({
+  fingerprint: z.string(),
+  changedChapters: z.array(
+    z.object({
+      id: IdSchema,
+      title: z.string(),
+      fromParentId: IdSchema,
+      toParentId: IdSchema,
+      fromPosition: z.number().int().positive(),
+      toPosition: z.number().int().positive(),
+    }),
+  ),
+  affectedRuns: z.array(
+    z.object({
+      id: IdSchema,
+      outlineNodeId: IdSchema.nullable(),
+      reason: z.enum(["chapter_context", "rolling_plan"]),
+    }),
+  ),
+  foreshadowWindows: z.array(
+    z.object({
+      id: IdSchema,
+      title: z.string(),
+      fromNodeId: IdSchema.nullable(),
+      toNodeId: IdSchema.nullable(),
+      beforeChapterIds: z.array(IdSchema),
+      afterChapterIds: z.array(IdSchema),
+      inverted: z.boolean(),
+    }),
+  ),
+});
+export type OutlineChangePreview = z.infer<typeof OutlineChangePreviewSchema>;
 
 export const CanonEntityTypeSchema = z.enum([
   "character",

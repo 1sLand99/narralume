@@ -1,4 +1,6 @@
 import {
+  type OutlineChangeRequest,
+  type OutlineChangePreview,
   MIN_VIABLE_PARTIAL_CHARACTERS,
   QUALITY_PRESETS,
   type AdoptRunStreamResponse,
@@ -36,6 +38,9 @@ import {
   type RunDetailDto,
   type RunOrigin,
   type StorySteerDto,
+  type StoryCompassDto,
+  type StoryLongLineDto,
+  type StoryDevelopmentReviewDto,
   type UpsertModelRequest,
   type UpsertProviderRequest,
   type WireApi,
@@ -952,17 +957,9 @@ export interface ReviewWorkspace {
   proposals: ReviewRevisionProposal[];
 }
 
-export interface StoryCompass {
-  projectId: string;
-  corePromise: string;
-  endingDirection: string | null;
-  longLines: { title: string; promise: string; status: string }[];
-  themeQuestions: string[];
-  target: { chapters: number; wordsPerChapter: number; volumes: number };
-  constraints: string[];
-  version: number;
-  updatedAt: string;
-}
+export type StoryCompass = StoryCompassDto;
+export type StoryLongLine = StoryLongLineDto;
+export type StoryDevelopmentReview = StoryDevelopmentReviewDto;
 
 export interface FoundationCandidate {
   id: string;
@@ -1846,6 +1843,16 @@ export async function updateOutlineNode(
   );
 }
 
+export type { OutlineChangeRequest, OutlineChangePreview } from "@narralume/contracts";
+
+export function previewOutlineChange(projectId: string, change: OutlineChangeRequest): Promise<OutlineChangePreview> {
+  return requestJson<OutlineChangePreview>(`/api/projects/${encodeURIComponent(projectId)}/outline/changes/preview`, jsonRequest("POST", change));
+}
+
+export function applyOutlineChange(projectId: string, change: OutlineChangeRequest, previewFingerprint: string): Promise<OutlineNode[]> {
+  return requestJson<OutlineNode[]>(`/api/projects/${encodeURIComponent(projectId)}/outline/changes`, jsonRequest("POST", { change, previewFingerprint }));
+}
+
 export function removeOutlineNode(projectId: string, node: OutlineNode) {
   return removeStoryResource(
     `/api/projects/${encodeURIComponent(projectId)}/outline/${encodeURIComponent(node.id)}`,
@@ -2372,6 +2379,10 @@ export async function updateStoryCompass(
     `/api/projects/${encodeURIComponent(projectId)}/compass`,
     jsonRequest("PUT", input),
   );
+}
+
+export function getStoryDevelopmentReviews(projectId: string, signal?: AbortSignal): Promise<StoryDevelopmentReview[]> {
+  return requestJson(`/api/projects/${encodeURIComponent(projectId)}/compass/reviews`, signal ? { signal } : {});
 }
 
 export async function createAutopilotSession(

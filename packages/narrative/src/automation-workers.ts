@@ -409,6 +409,7 @@ export class AutomationWorkerSuite {
           "zh-CN": [
             "你是长篇小说滚动规划师。只详细规划当前可见窗口，不要一次冻结整部长篇。",
             "计划必须承接已提交章节，兑现指南针，尊重作者锁定意图与 steer。",
+            "指南针 longLines 的 development 是作者维护的阶段记录：scopeNodeId 指定当前卷或弧，stageGoal 是阶段目标，progress 是作者对进展的记录，openPromises 是尚未兑现的承诺，nextDevelopment 是后续方向。结合当前阶段选择本窗口推进的线，不要求每条线每章出场，也不为完成窗口而全部解决。evidenceChapterIds 指向已定稿章节；核对摘要和事实，不把计划目标或缺少证据的进展记录变成已经发生的事实。",
             "每章要有目标、阻力、转折、结果与结尾钩子；结果必须推动因果链。",
             "运行剩余章数只表示本次委托的工作量，不表示故事弧、卷或全书必须结束。全书结局只由作者意图与已建立的叙事进展决定，不为用完窗口而提前收束。",
             "volumeId/arcId 填写要继续的现有卷/弧 ID；只有剧情进入新阶段时才填 null 创建新卷/弧。一弧可以跨多个窗口，换窗口不等于换弧。继续已有结构时保留其目标和已经发生的结果。arcId 必须属于选定的 volumeId。",
@@ -417,6 +418,7 @@ export class AutomationWorkerSuite {
           en: [
             "You are the rolling planner of a long-form novel. Plan only the currently visible window in detail; never freeze an entire long novel at once.",
             "The plan must continue from committed chapters, honor the compass, and respect the author's locked intent and steers.",
+            "Each longLines.development entry is an author-maintained stage record: scopeNodeId identifies its volume or arc, stageGoal is the current objective, progress is the author's progress note, openPromises lists outstanding promises, and nextDevelopment gives future direction. Select lines relevant to this window; not every line must appear in every chapter or resolve by the window's end. evidenceChapterIds reference committed chapters. Check summaries and facts; planned goals and unsupported progress notes are not established events.",
             "Each chapter needs a goal, resistance, a turn, an outcome, and a closing hook; outcomes must advance the causal chain.",
             "Remaining run chapters describe this assignment's workload, not the end of an arc, volume, or book. Resolve the book only when author intent and established narrative progress call for it, never just to finish a window.",
             "Set volumeId/arcId to the existing volume/arc to continue, or null to create one only when the story enters a new phase. An arc may span several windows. Preserve existing goals and established outcomes. arcId must belong to volumeId.",
@@ -449,6 +451,7 @@ export class AutomationWorkerSuite {
           attempts: result.attempts,
           // 保存生成时的大纲基线；commit 时比对，防止后台规划覆盖期间的人工编辑。
           outlineFingerprint: outlineFingerprint(outline),
+          compassVersion: compass?.version ?? null,
           contextReceiptId: compiled.receipt.id,
         },
       },
@@ -472,6 +475,16 @@ export class AutomationWorkerSuite {
     const now = this.now().toISOString();
     const result = this.database.transaction(() => {
       const outline = this.story.listOutline(session.projectId);
+      if (
+        !isRecord(artifact.generation) ||
+        artifact.generation.compassVersion !==
+          (this.automation.getCompass(session.projectId)?.version ?? null)
+      ) {
+        throw permanent(
+          "compass.baseline.conflict",
+          "The story compass changed after rolling planning; generate a new plan from the current direction",
+        );
+      }
       // 生成后大纲若被人工编辑（骨架弧详情、结构、章节变动），旧方案必须显式失效，
       // 不能用旧方案无条件覆盖作者的修改或按漂移后的结构追加章节。
       if (!baseline || outlineFingerprint(outline) !== baseline) {
@@ -851,11 +864,13 @@ export class AutomationWorkerSuite {
               `你是长篇小说${scopeType === "arc" ? "故事弧" : "卷"}复盘编辑。`,
               "基于章节摘要评估承诺兑现、因果、人物弧、节奏和连续性。建议服务于下一滚动窗口，不改写已提交事实。",
               "这是当前已写部分的阶段复盘，不意味着故事弧、卷或全书已经结束。区分已兑现、仍在发展和需要后续处理的承诺；不要仅因本次运行结束而要求结局或回收所有伏笔。仅依据所给摘要判断，明确证据不足之处。",
+              "对照长期故事线的阶段目标、作者进展记录与未兑现承诺，指出有摘要支持的变化和下一阶段建议。作者记录本身不是正文证据，计划中的 nextDevelopment 尚未发生；调整仅作为 compassAdjustments 建议，不自动修改故事线。",
             ],
             en: [
               `You are the retrospective editor of a long-form novel ${scopeType === "arc" ? "story arc" : "volume"}.`,
               "Assess promise fulfillment, causality, character arcs, pacing, and continuity from chapter summaries. Suggestions serve the next rolling window and never rewrite committed facts.",
               "This reviews progress so far, not an assumed arc, volume, or book ending. Distinguish fulfilled promises, ongoing developments, and future work. Do not demand an ending or resolve every setup because this run is over. State evidence limitations when summaries are insufficient.",
+              "Compare long-line stage goals, author progress notes, and open promises with the supplied summaries. Identify supported changes and possible next developments. Author notes are not manuscript evidence, and planned nextDevelopment has not happened. Return adjustments as compassAdjustments suggestions without updating story lines.",
             ],
           },
         ),

@@ -3,6 +3,7 @@ export * from "./embedding-support.js";
 export * from "./story-state-packet.js";
 export * from "./settlement-application-service.js";
 export * from "./outline-context.js";
+export * from "./outline-baseline.js";
 export * from "./paragraph-locator.js";
 export * from "./revision-application-service.js";
 export * from "./schemas.js";

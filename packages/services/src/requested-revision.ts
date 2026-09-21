@@ -1,4 +1,5 @@
 import type { RunSnapshot } from "@narralume/domain";
+import { requireCurrentChapterOutline } from "@narralume/narrative";
 import { buildRequestedRevisionRecipe } from "@narralume/harness";
 import {
   SqliteAutomationRepository,
@@ -53,6 +54,7 @@ export function requestManuscriptRevision(
   }
 
   const source = runs.getSnapshot(input.sourceRunId);
+  requireCurrentChapterOutline(database, source);
   const sourceAwaitReason = latestAwaitReason(source);
   if (
     source.run.status !== "awaiting_user" ||

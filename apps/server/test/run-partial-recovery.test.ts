@@ -1,6 +1,7 @@
 import { createProject } from "@narralume/domain";
 import { buildChapterRecipe } from "@narralume/harness";
 import type { NarrativeModelClient } from "@narralume/narrative";
+import { outlineStructureFingerprint } from "@narralume/narrative";
 import {
   SqliteLlmCallRepository,
   SqliteModelRepository,
@@ -8,6 +9,7 @@ import {
   SqliteProviderRepository,
   SqliteRunRepository,
   SqliteRunStreamRepository,
+  SqliteStoryRepository,
 } from "@narralume/persistence";
 import { NodeNarrativeDatabase } from "@narralume/persistence/node";
 import { afterEach, describe, expect, it } from "vitest";
@@ -148,6 +150,11 @@ function seedPartial(
     contextStep.id,
     {
       text: "编译上下文",
+      outlineStructureFingerprint: outlineStructureFingerprint(
+        new SqliteStoryRepository(database).listOutline(
+          runs.getSnapshot(runId).run.projectId,
+        ),
+      ),
       targetOutlineNodeId: chapterId,
       contexts: Object.fromEntries(
         [

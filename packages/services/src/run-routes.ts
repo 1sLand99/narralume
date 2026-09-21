@@ -55,6 +55,7 @@ import {
   extractEffectivePolicy,
 } from "@narralume/services";
 import { z } from "zod";
+import { requireCurrentChapterOutline } from "@narralume/narrative";
 
 import type { RunCoordinator, RouteApp } from "@narralume/services";
 import { RunRouteError } from "./route-error.js";
@@ -557,6 +558,7 @@ export function registerRunRoutes(
     }
     if (input.action === "resume") runs.resume(runId, now);
     if (input.action === "accept_plan") {
+      requireCurrentChapterOutline(database, runs.getSnapshot(runId));
       requireAwaitReason(
         runs.getSnapshot(runId),
         "scene_plan_approval_required",
@@ -565,6 +567,7 @@ export function registerRunRoutes(
       runs.resume(runId, now);
     }
     if (input.action === "accept_manuscript") {
+      requireCurrentChapterOutline(database, runs.getSnapshot(runId));
       requireAwaitReason(
         runs.getSnapshot(runId),
         "chapter_commit_approval_required",

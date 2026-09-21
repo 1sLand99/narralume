@@ -4,11 +4,28 @@ import type { RunMode } from "./run.js";
 export type FoundationCandidateKind = "intent" | "compass" | "entity";
 export type FoundationCandidateStatus = "pending" | "adopted" | "discarded";
 
+export interface StoryLongLine {
+  title: string;
+  promise: string;
+  status: "open" | "developing" | "resolved";
+  /** Optional author-maintained stage record; absence means progress is not recorded. */
+  development?:
+    | {
+        scopeNodeId: string | null;
+        stageGoal: string;
+        progress: string;
+        openPromises: readonly string[];
+        nextDevelopment: string;
+        evidenceChapterIds: readonly string[];
+      }
+    | undefined;
+}
+
 export interface StoryCompass {
   projectId: ProjectId;
   corePromise: string;
   endingDirection: string | null;
-  longLines: readonly { title: string; promise: string; status: string }[];
+  longLines: readonly StoryLongLine[];
   themeQuestions: readonly string[];
   target: Readonly<{
     chapters: number;

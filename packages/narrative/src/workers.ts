@@ -1,4 +1,8 @@
 import { sha256Hex } from "@narralume/domain";
+import {
+  outlineStructureFingerprint,
+  requireCurrentChapterOutline,
+} from "./outline-baseline.js";
 
 import {
   ContextCompiler,
@@ -156,6 +160,7 @@ export class ChapterWorkerSuite {
     return {
       execute: (snapshot, step, signal) => {
         requireActiveProject(this.database, snapshot.run.projectId);
+        requireCurrentChapterOutline(this.database, snapshot);
         return execute(snapshot, step, signal);
       },
     };
@@ -629,6 +634,7 @@ export class ChapterWorkerSuite {
       artifactKind: "compiled-context",
       output: {
         inventoryDigest,
+        outlineStructureFingerprint: outlineStructureFingerprint(outline),
         inventorySources: sources.length,
         contexts,
         baseDocumentId: chapterDocument?.id ?? null,
@@ -1369,6 +1375,7 @@ export class ChapterWorkerSuite {
     );
     const output = this.database.transaction(() => {
       requireActiveRunCommit(this.database, run.id, run.projectId, signal);
+      requireCurrentChapterOutline(this.database, snapshot);
       let document = stringOrNull(context.baseDocumentId)
         ? this.documents.get(
             run.projectId,

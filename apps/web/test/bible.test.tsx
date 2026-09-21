@@ -19,6 +19,7 @@ import { BibleWorkspace } from "../src/workspaces/bible";
 /* 故事圣经摊开的整本 spread：intent 首语、大纲、实体、事实、关系、时间线、伏笔七大板块。 */
 
 const BIBLE = {
+  occupiedOutlineNodeIds: [],
   project: {
     id: "p-1-tides",
     title: "潮汐灯塔",

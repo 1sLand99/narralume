@@ -32,6 +32,9 @@ import {
   UpdateAuthorIntentRequestSchema,
   UpdateCanonEntityRequestSchema,
   UpdateOutlineNodeRequestSchema,
+  OutlineChangeRequestSchema,
+  OutlineChangePreviewSchema,
+  ApplyOutlineChangeRequestSchema,
   UpdateProjectRequestSchema,
   UpdateForeshadowRequestSchema,
   UpdateTimelineEventRequestSchema,
@@ -56,6 +59,10 @@ import {
   type NarrativeDatabase,
 } from "@narralume/persistence";
 import { z } from "zod";
+import {
+  applyOutlineChange,
+  previewOutlineChange,
+} from "./outline-structure.js";
 
 import type { RunCoordinator, RouteApp } from "@narralume/services";
 import { StoryContextPreviewService } from "@narralume/services";
@@ -409,6 +416,38 @@ export function registerStoryRoutes(
     };
     return AuthorIntentSchema.parse(story.upsertAuthorIntent(updated));
   });
+
+  app.route(
+    "POST",
+    "/api/projects/:projectId/outline/changes/preview",
+    async (request) => {
+      const { projectId } = ProjectParamsSchema.parse(request.params);
+      requireProject(projects, projectId);
+      return OutlineChangePreviewSchema.parse(
+        previewOutlineChange(
+          database,
+          projectId,
+          OutlineChangeRequestSchema.parse(request.body),
+        ),
+      );
+    },
+  );
+
+  app.route(
+    "POST",
+    "/api/projects/:projectId/outline/changes",
+    async (request) => {
+      const { projectId } = ProjectParamsSchema.parse(request.params);
+      requireProject(projects, projectId);
+      const input = ApplyOutlineChangeRequestSchema.parse(request.body);
+      return applyOutlineChange(
+        database,
+        projectId,
+        input.change,
+        input.previewFingerprint,
+      ).map((node) => OutlineNodeSchema.parse(node));
+    },
+  );
 
   app.route("POST", "/api/projects/:projectId/outline", async (request) => {
     const { projectId } = ProjectParamsSchema.parse(request.params);

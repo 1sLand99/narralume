@@ -1,19 +1,27 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
   CreateAutopilotSessionRequestSchema,
   extractPolicyUnknownFields,
+  type StoryCompassDto,
 } from "@narralume/contracts";
 import type { NarrativeModelClient } from "@narralume/narrative";
 import { createOutlineNode } from "@narralume/domain";
+import { buildRollingOutlineRecipe } from "@narralume/harness";
 import {
   SqliteRunRepository,
   SqliteStoryRepository,
   SqliteContextReceiptRepository,
+  SqliteAutomationRepository,
 } from "@narralume/persistence";
 import { NodeNarrativeDatabase } from "@narralume/persistence/node";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "../src/app.js";
 import type { ServerConfig } from "../src/config.js";
+import { applyOutlineChangeViaApi } from "./outline-change-helper.js";
 
 const config: ServerConfig = {
   dataDirectory: ".",
@@ -26,6 +34,7 @@ const resources: {
   app: Awaited<ReturnType<typeof buildApp>>;
   database: NodeNarrativeDatabase;
 }[] = [];
+const recoveryDirectories: string[] = [];
 
 afterEach(async () => {
   while (resources.length) {
@@ -33,9 +42,506 @@ afterEach(async () => {
     await resource?.app.close();
     resource?.database.close();
   }
+  for (const directory of recoveryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 describe("automation API", () => {
+  it.each(["zh-CN", "en"] as const)(
+    "uses author stage records in %s planning and rejects a compass changed during generation",
+    async (language) => {
+      const requests: Array<{
+        instructions: string;
+        messages: { content: string }[];
+      }> = [];
+      let changeDirection: (() => void) | null = null;
+      const { app, database } = await setup(
+        automationModel({
+          beforeStructured: (purpose, request) => {
+            if (purpose !== "rolling-outline") return;
+            requests.push(request as (typeof requests)[number]);
+            changeDirection?.();
+            changeDirection = null;
+          },
+        }),
+      );
+      const projectId = (
+        await app.inject({
+          method: "POST",
+          url: "/api/projects",
+          payload: {
+            requestId: globalThis.crypto.randomUUID(),
+            title: "长线窗口",
+            language,
+          },
+        })
+      ).json().id as string;
+      const automation = new SqliteAutomationRepository(database);
+      const story = new SqliteStoryRepository(database);
+      const runs = new SqliteRunRepository(database);
+      const root = story.listOutline(projectId)[0]!;
+      const now = new Date().toISOString();
+      const first = await app.inject({
+        method: "PUT",
+        url: `/api/projects/${projectId}/compass`,
+        payload: {
+          expectedVersion: null,
+          corePromise: "保持全书方向",
+          endingDirection: null,
+          themeQuestions: [],
+          constraints: [],
+          target: { chapters: 100, wordsPerChapter: 3000, volumes: 4 },
+          longLines: [
+            {
+              title: "港外的世界",
+              promise: "调查逐步扩展",
+              status: "developing",
+              development: {
+                scopeNodeId: null,
+                stageGoal: "建立港外的人际联系",
+                progress: "尚未验证的作者判断",
+                openPromises: ["未找到的收信人"],
+                nextDevelopment: "原方向",
+                evidenceChapterIds: [],
+              },
+            },
+          ],
+        },
+      });
+      expect(first.statusCode, first.body).toBe(200);
+      const compass = first.json() as StoryCompassDto;
+      const created = await app.inject({
+        method: "POST",
+        url: `/api/projects/${projectId}/autopilot/sessions`,
+        payload: {
+          requestId: globalThis.crypto.randomUUID(),
+          targetChapters: 1,
+          windowSize: 1,
+        },
+      });
+      expect(created.statusCode, created.body).toBe(202);
+      const sessionId = created.json().id as string;
+      const createPlan = () => {
+        const id = globalThis.crypto.randomUUID();
+        const recipe = buildRollingOutlineRecipe(id);
+        runs.create({
+          id,
+          projectId,
+          recipe: recipe.name,
+          recipeVersion: recipe.version,
+          mode: "autopilot",
+          targetOutlineNodeId: root.id,
+          policy: { sessionId },
+          steps: recipe.steps,
+          now,
+        });
+        return id;
+      };
+      const previousOutline = story.listOutline(projectId);
+      changeDirection = () => {
+        automation.upsertCompass({
+          ...compass,
+          longLines: [
+            {
+              ...compass.longLines[0]!,
+              development: {
+                ...compass.longLines[0]!.development!,
+                nextDevelopment: "作者调整后的新方向",
+              },
+            },
+          ],
+          updatedAt: now,
+        });
+      };
+      const staleRun = createPlan();
+      expect(await finishRun(app, projectId, staleRun)).toBe("failed");
+      expect(
+        runs
+          .getSnapshot(staleRun)
+          .steps.find((step) => step.kind === "outline.commit")?.error?.code,
+      ).toBe("compass.baseline.conflict");
+      expect(story.listOutline(projectId)).toEqual(previousOutline);
+      expect(JSON.stringify(requests[0]!.messages)).toContain(
+        "建立港外的人际联系",
+      );
+      expect(JSON.stringify(requests[0]!.messages)).toContain("未找到的收信人");
+      expect(JSON.stringify(requests[0]!.messages)).not.toContain(
+        "作者调整后的新方向",
+      );
+      expect(requests[0]!.instructions).toContain(
+        language === "en"
+          ? "unsupported progress notes are not established events"
+          : "不把计划目标或缺少证据的进展记录变成已经发生的事实",
+      );
+      const freshRun = createPlan();
+      expect(await finishRun(app, projectId, freshRun)).toBe("completed");
+      expect(JSON.stringify(requests[1]!.messages)).toContain(
+        "作者调整后的新方向",
+      );
+      expect(automation.getCompass(projectId)?.version).toBe(2);
+    },
+  );
+
+  it("does not commit a rolling plan generated before a chapter reorder", async () => {
+    const { app, database } = await setup();
+    const projectId = (
+      await app.inject({
+        method: "POST",
+        url: "/api/projects",
+        payload: { requestId: "reordered-plan", title: "规划竞争" },
+      })
+    ).json().id as string;
+    const story = new SqliteStoryRepository(database);
+    const root = story.listOutline(projectId)[0]!;
+    const now = new Date().toISOString();
+    const chapters = [0, 1].map((ordinal) =>
+      story.insertOutlineNode(
+        createOutlineNode({
+          id: `planning-order-${ordinal}`,
+          projectId,
+          parent: root,
+          kind: "chapter",
+          ordinal,
+          title: `Chapter ${ordinal}`,
+          now,
+        }),
+      ),
+    );
+    const created = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/autopilot/sessions`,
+      payload: {
+        requestId: "planning-order-session",
+        targetChapters: 1,
+        windowSize: 1,
+      },
+    });
+    const sessionId = created.json().id as string;
+    const runs = new SqliteRunRepository(database);
+    const runId = "planning-order-run";
+    const recipe = buildRollingOutlineRecipe(runId);
+    runs.create({
+      id: runId,
+      projectId,
+      recipe: recipe.name,
+      recipeVersion: recipe.version,
+      mode: "autopilot",
+      targetOutlineNodeId: root.id,
+      policy: { sessionId },
+      steps: recipe.steps,
+      now,
+    });
+    const generated = await app.inject({
+      method: "POST",
+      url: `/api/runs/${runId}/advance`,
+      payload: { projectId },
+    });
+    expect(generated.statusCode, generated.body).toBe(200);
+    expect(
+      runs
+        .getSnapshot(runId)
+        .steps.find((step) => step.kind === "outline.generate")?.status,
+    ).toBe("succeeded");
+    const reordered = await applyOutlineChangeViaApi(app, projectId, {
+      kind: "reorder",
+      parentId: root.id,
+      nodes: [...chapters]
+        .reverse()
+        .map((node) => ({ id: node.id, expectedUpdatedAt: node.updatedAt })),
+    });
+    expect(reordered.statusCode, reordered.body).toBe(200);
+    const baseline = story.listOutline(projectId);
+    expect(await finishRun(app, projectId, runId)).toBe("failed");
+    expect(
+      runs
+        .getSnapshot(runId)
+        .steps.find((step) => step.kind === "outline.commit")?.error?.code,
+    ).toBe("outline.baseline.conflict");
+    expect(story.listOutline(projectId)).toEqual(baseline);
+  });
+
+  it("rejects both acceptance routes for a chapter candidate after other planned chapters are reordered", async () => {
+    const { app, database } = await setup();
+    const project = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      payload: { requestId: "stale-order", title: "重排候选" },
+    });
+    const projectId = project.json().id as string;
+    const story = new SqliteStoryRepository(database);
+    const root = story.listOutline(projectId)[0]!;
+    const now = new Date().toISOString();
+    for (let ordinal = 0; ordinal < 3; ordinal += 1) {
+      story.insertOutlineNode(
+        createOutlineNode({
+          id: `order-chapter-${ordinal}`,
+          projectId,
+          parent: root,
+          kind: "chapter",
+          title: `Chapter ${ordinal}`,
+          ordinal,
+          now,
+        }),
+      );
+    }
+    const created = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/autopilot/sessions`,
+      payload: {
+        requestId: "stale-order-session",
+        approvalMode: "per_chapter",
+        targetChapters: 1,
+        windowSize: 1,
+        maxRevisionCycles: 0,
+        chapterPolicy: { minChapterCharacters: 100 },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(202);
+    const sessionId = created.json().id as string;
+    await advanceSession(app, sessionId);
+    const runId = (await getSession(app, sessionId)).session.currentRunId!;
+    expect(await finishRun(app, projectId, runId)).toBe("awaiting_user");
+    await advanceSession(app, sessionId);
+    const siblings = story.listOutlineChildren(projectId, root.id);
+    const reordered = await applyOutlineChangeViaApi(app, projectId, {
+      kind: "reorder",
+      parentId: root.id,
+      nodes: [siblings[0]!, siblings[2]!, siblings[1]!].map((node) => ({
+        id: node.id,
+        expectedUpdatedAt: node.updatedAt,
+      })),
+    });
+    expect(reordered.statusCode, reordered.body).toBe(200);
+    for (const url of [
+      `/api/autopilot/sessions/${sessionId}/actions`,
+      `/api/runs/${runId}/actions`,
+    ]) {
+      const accepted = await app.inject({
+        method: "POST",
+        url,
+        payload: {
+          action: "accept_manuscript",
+          ...(url.startsWith("/api/runs/")
+            ? { projectId }
+            : { requestId: "stale-accept" }),
+        },
+      });
+      expect(accepted.statusCode, accepted.body).toBe(409);
+      expect(accepted.json()).toMatchObject({
+        error: { code: "outline.context.stale" },
+      });
+    }
+    const runs = new SqliteRunRepository(database);
+    expect(runs.getSnapshot(runId).run.status).toBe("awaiting_user");
+    // Even bypassing the approval routes cannot commit using stale context.
+    runs.mergePolicy(runId, { chapterApproved: true }, now);
+    runs.resume(runId, now);
+    expect(await finishRun(app, projectId, runId)).toBe("failed");
+    expect(
+      runs.getSnapshot(runId).steps.find((step) => step.status === "failed")
+        ?.error?.code,
+    ).toBe("outline.context.stale");
+    expect(
+      (
+        await app.inject({
+          method: "GET",
+          url: `/api/projects/${projectId}/story-bible`,
+        })
+      ).json().documents,
+    ).toEqual([]);
+  });
+
+  it("atomically reconciles chapter outcomes and preserves runs and director notes on failed child creation", async () => {
+    const { app, database } = await setup();
+    const { projectId, sessionId, runId } = await createSingleChapterSession(
+      app,
+      "原子调度",
+    );
+    expect(await finishRun(app, projectId, runId)).toBe("completed");
+    const automation = new SqliteAutomationRepository(database);
+    database.raw
+      .exec(`CREATE TRIGGER fail_chapter_count BEFORE UPDATE OF completed_chapters
+      ON autopilot_sessions BEGIN SELECT RAISE(ABORT, 'injected outcome failure'); END`);
+    const failed = await app.inject({
+      method: "POST",
+      url: `/api/autopilot/sessions/${sessionId}/advance`,
+    });
+    expect(failed.statusCode).toBe(500);
+    expect(automation.requireSession(sessionId)).toMatchObject({
+      currentRunId: runId,
+      completedChapters: 0,
+    });
+    expect(automation.requireRunLink(sessionId, runId).processedAt).toBeNull();
+    database.raw.exec("DROP TRIGGER fail_chapter_count");
+    await advanceSession(app, sessionId);
+    expect(automation.requireSession(sessionId).completedChapters).toBe(1);
+    await advanceSession(app, sessionId);
+    expect(automation.requireSession(sessionId).completedChapters).toBe(1);
+
+    // A second session gives the scheduler an unstarted chapter and a queued note.
+    const chapter = new SqliteStoryRepository(database)
+      .listOutline(projectId)
+      .find((node) => node.kind === "chapter")!;
+    new SqliteStoryRepository(database).updateOutlineStatus(
+      projectId,
+      chapter.id,
+      "planned",
+      new Date().toISOString(),
+    );
+    const created = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/autopilot/sessions`,
+      payload: {
+        requestId: "atomic-followup",
+        approvalMode: "continuous",
+        targetChapters: 1,
+      },
+    });
+    expect(created.statusCode, created.body).toBe(202);
+    const nextSessionId = created.json().id as string;
+    automation.appendActiveNote(
+      nextSessionId,
+      "保留人物的犹豫",
+      new Date().toISOString(),
+    );
+    const beforeRuns = database.raw
+      .prepare("SELECT id FROM runs ORDER BY id")
+      .all();
+    database.raw
+      .exec(`CREATE TRIGGER fail_child_link BEFORE INSERT ON autopilot_run_links
+      BEGIN SELECT RAISE(ABORT, 'injected link failure'); END`);
+    const failedLink = await app.inject({
+      method: "POST",
+      url: `/api/autopilot/sessions/${nextSessionId}/advance`,
+    });
+    expect(failedLink.statusCode).toBe(500);
+    expect(
+      database.raw.prepare("SELECT id FROM runs ORDER BY id").all(),
+    ).toEqual(beforeRuns);
+    expect(automation.requireSession(nextSessionId)).toMatchObject({
+      currentRunId: null,
+      activeNotes: ["保留人物的犹豫"],
+    });
+    expect(automation.listRunLinks(nextSessionId)).toHaveLength(0);
+    database.raw.exec("DROP TRIGGER fail_child_link");
+    await advanceSession(app, nextSessionId);
+    const next = automation.requireSession(nextSessionId);
+    expect(next.activeNotes).toEqual([]);
+    expect(
+      new SqliteRunRepository(database).getSnapshot(next.currentRunId!).run
+        .policy.steerNotes,
+    ).toEqual(["保留人物的犹豫"]);
+    expect(automation.listRunLinks(nextSessionId)).toHaveLength(1);
+  });
+
+  it("resumes two planning windows across database reopenings without replaying completed reviews or chapters", async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "narralume-autopilot-recovery-"),
+    );
+    recoveryDirectories.push(directory);
+    const databasePath = join(directory, "story.sqlite");
+    const calls: string[] = [];
+    const planningInputs: string[] = [];
+    const model = automationModel({
+      beforeStructured(purpose, request) {
+        calls.push(purpose);
+        if (purpose === "rolling-outline")
+          planningInputs.push(JSON.stringify(request));
+      },
+    });
+    let runtime = await setup(model, databasePath);
+    const project = await runtime.app.inject({
+      method: "POST",
+      url: "/api/projects",
+      payload: { requestId: "reopen-book", title: "恢复后的航程" },
+    });
+    expect(project.statusCode).toBe(201);
+    const projectId = project.json().id as string;
+    const created = await runtime.app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/autopilot/sessions`,
+      payload: {
+        requestId: "reopen-session",
+        approvalMode: "continuous",
+        targetChapters: 2,
+        windowSize: 1,
+        maxRevisionCycles: 0,
+        chapterPolicy: { minChapterCharacters: 100 },
+      },
+    });
+    expect(created.statusCode).toBe(202);
+    const sessionId = created.json().id as string;
+    let restarts = 0;
+    for (let index = 0; index < 90; index += 1) {
+      await advanceSession(runtime.app, sessionId);
+      const detail = await getSession(runtime.app, sessionId);
+      if (detail.session.status === "completed") break;
+      expect(["failed", "awaiting_user", "paused"]).not.toContain(
+        detail.session.status,
+      );
+      if (detail.session.currentRunId) {
+        const advanced = await runtime.app.inject({
+          method: "POST",
+          url: `/api/runs/${detail.session.currentRunId}/advance`,
+          payload: { projectId },
+        });
+        expect(advanced.statusCode, advanced.body).toBe(200);
+      }
+      // Dispose both coordinators and the SQLite connection after each persisted
+      // step, including between arc and volume review and before child reconciliation.
+      const snapshot = new SqliteAutomationRepository(
+        runtime.database,
+      ).requireSession(sessionId);
+      await runtime.app.close();
+      runtime.database.close();
+      resources.splice(resources.indexOf(runtime), 1);
+      runtime = await setup(model, databasePath);
+      restarts += 1;
+      expect(
+        new SqliteAutomationRepository(runtime.database).requireSession(
+          sessionId,
+        ),
+      ).toEqual(snapshot);
+    }
+    const detail = await getSession(runtime.app, sessionId);
+    expect(restarts).toBeGreaterThan(10);
+    expect(detail.session).toMatchObject({
+      status: "completed",
+      completedChapters: 2,
+    });
+    expect(detail.links.map((link) => link.role)).toEqual([
+      "rolling-plan",
+      "chapter",
+      "closing-review",
+      "rolling-plan",
+      "chapter",
+      "closing-review",
+    ]);
+    expect(detail.reviews).toHaveLength(4);
+    for (const purpose of [
+      "rolling-outline",
+      "scene-plan",
+      "chapter-settlement",
+      "arc-review",
+      "volume-review",
+    ]) {
+      expect(calls.filter((call) => call === purpose)).toHaveLength(2);
+    }
+    expect(planningInputs[1]).toContain("下一弧提高主动选择代价");
+    expect(
+      new SqliteStoryRepository(runtime.database)
+        .listOutline(projectId)
+        .filter(
+          (node) => node.kind === "chapter" && node.status === "committed",
+        ),
+    ).toHaveLength(2);
+    await advanceSession(runtime.app, sessionId);
+    expect((await getSession(runtime.app, sessionId)).links).toEqual(
+      detail.links,
+    );
+  });
+
   it("rejects an invalid arc reference without leaving a partially created volume", async () => {
     const { app, database } = await setup(
       automationModel({
@@ -1837,8 +2343,11 @@ describe("automation API", () => {
   });
 });
 
-async function setup(model: NarrativeModelClient = automationModel()) {
-  const database = new NodeNarrativeDatabase();
+async function setup(
+  model: NarrativeModelClient = automationModel(),
+  databasePath = ":memory:",
+) {
+  const database = new NodeNarrativeDatabase(databasePath);
   const environment = {
     NARRATIVE_LLM_API_KEY: "server-only-test-key",
     NARRATIVE_LLM_BASE_URL: "https://api.example.com/v1",
@@ -1854,8 +2363,9 @@ async function setup(model: NarrativeModelClient = automationModel()) {
     enableRunWorker: false,
     logger: false,
   });
-  resources.push({ app, database });
-  return { app, database };
+  const resource = { app, database };
+  resources.push(resource);
+  return resource;
 }
 
 async function createSingleChapterSession(

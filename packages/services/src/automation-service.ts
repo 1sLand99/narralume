@@ -22,6 +22,7 @@ import { z } from "zod";
 import { randomUuid } from "./internal/crypto.js";
 import { isRecord, withRuntimeModelPolicy } from "./run-policy.js";
 import { ServiceError } from "./service-error.js";
+import { validateLongLineReferences } from "./story-compass.js";
 
 export class AutomationServiceError extends ServiceError {
   constructor(code: string, message: string, statusCode: number) {
@@ -303,6 +304,10 @@ export function adoptCandidate(
       adoptedRefId = candidate.projectId;
     } else if (candidate.kind === "compass") {
       const input = UpdateCompassRequestSchema.parse(payload);
+      validateLongLineReferences(
+        story.listOutline(candidate.projectId),
+        input.longLines,
+      );
       const currentCompass = automation.getCompass(candidate.projectId);
       // 候选保存了生成时的指南针版本；生成后人工修改过的指南针不能被旧候选覆盖。
       if (

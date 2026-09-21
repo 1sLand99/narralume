@@ -1,4 +1,5 @@
 import type { JsonSchemaContract, StructuredValidator } from "@narralume/llm";
+import { StoryLongLineSchema } from "@narralume/contracts";
 import { z } from "zod";
 
 const IntentProposalSchema = z.object({
@@ -15,13 +16,7 @@ const CompassProposalSchema = z.object({
   corePromise: z.string().min(1),
   endingDirection: z.string().nullable(),
   longLines: z
-    .array(
-      z.object({
-        title: z.string().min(1),
-        promise: z.string().min(1),
-        status: z.enum(["open", "developing", "resolved"]),
-      }),
-    )
+    .array(StoryLongLineSchema.omit({ development: true }))
     .min(1)
     .max(12),
   themeQuestions: z.array(z.string().min(1)).min(1).max(12),

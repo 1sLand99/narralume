@@ -1,12 +1,18 @@
 import { randomUUID } from "node:crypto";
 
 import { buildCanonCandidateRecipe } from "@narralume/harness";
-import { SqliteRunRepository } from "@narralume/persistence";
+import {
+  SqliteRunRepository,
+  SqliteStoryRepository,
+  SqliteDocumentRepository,
+} from "@narralume/persistence";
+import { createOutlineNode, createDocument } from "@narralume/domain";
 import { NodeNarrativeDatabase } from "@narralume/persistence/node";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "../src/app.js";
 import type { ServerConfig } from "../src/config.js";
+import { applyOutlineChangeViaApi } from "./outline-change-helper.js";
 
 const config: ServerConfig = {
   dataDirectory: ".",
@@ -59,6 +65,107 @@ async function createProject(
 }
 
 describe("story kernel API", () => {
+  it("reorders complete sibling plans atomically and rejects stale, malformed and protected moves", async () => {
+    const { app, database } = await setup();
+    const project = await createProject(app);
+    const story = new SqliteStoryRepository(database);
+    const root = story.listOutline(project.id)[0]!;
+    const now = new Date().toISOString();
+    const chapters = [0, 1, 2].map((ordinal) =>
+      story.insertOutlineNode(
+        createOutlineNode({
+          id: randomUUID(),
+          projectId: project.id,
+          parent: root,
+          kind: "chapter",
+          title: `Chapter ${ordinal}`,
+          ordinal,
+          now,
+        }),
+      ),
+    );
+    const reorder = (
+      nodes: typeof chapters,
+      parentId = root.id,
+      projectId = project.id,
+    ) =>
+      applyOutlineChangeViaApi(app, projectId, {
+        kind: "reorder",
+        parentId,
+        nodes: nodes.map((node) => ({
+          id: node.id,
+          expectedUpdatedAt: node.updatedAt,
+        })),
+      });
+    for (const invalid of [
+      [chapters[0]!, chapters[0]!, chapters[2]!],
+      chapters.slice(0, 2),
+      [root, ...chapters.slice(1)],
+    ]) {
+      expect((await reorder(invalid)).statusCode).toBe(409);
+      expect(story.listOutlineChildren(project.id, root.id)).toEqual(chapters);
+    }
+    database.raw
+      .exec(`CREATE TRIGGER fail_reorder BEFORE UPDATE OF ordinal ON outline_nodes
+      WHEN NEW.ordinal = 1 AND OLD.ordinal >= 3 BEGIN SELECT RAISE(ABORT, 'injected reorder failure'); END`);
+    expect(
+      (await reorder([chapters[1]!, chapters[0]!, chapters[2]!])).statusCode,
+    ).toBe(500);
+    expect(story.listOutlineChildren(project.id, root.id)).toEqual(chapters);
+    database.raw.exec("DROP TRIGGER fail_reorder");
+    const moved = await reorder([chapters[1]!, chapters[0]!, chapters[2]!]);
+    expect(moved.statusCode, moved.body).toBe(200);
+    let current = story.listOutlineChildren(project.id, root.id);
+    expect(current.map((node) => node.id)).toEqual([
+      chapters[1]!.id,
+      chapters[0]!.id,
+      chapters[2]!.id,
+    ]);
+    expect(current.map((node) => node.ordinal)).toEqual([0, 1, 2]);
+    expect(current.map((node) => node.path).sort()).toEqual(
+      chapters.map((node) => node.path).sort(),
+    );
+    expect((await reorder(chapters)).json()).toMatchObject({
+      error: { code: "outline.version.conflict" },
+    });
+    expect(story.listOutlineChildren(project.id, root.id)).toEqual(current);
+    expect((await reorder(current)).json()).toEqual(
+      story.listOutline(project.id),
+    ); // No-op does not stale contexts.
+    const another = await createProject(app, "另一作品");
+    expect((await reorder(current, root.id, another.id)).statusCode).toBe(404);
+    for (const status of [
+      "drafting",
+      "review",
+      "committed",
+      "abandoned",
+    ] as const) {
+      story.updateOutlineStatus(project.id, current[1]!.id, status, now);
+      current = story.listOutlineChildren(project.id, root.id);
+      // Even leaving the protected middle node in place cannot move plans across it.
+      expect(
+        (await reorder([current[2]!, current[1]!, current[0]!])).json(),
+      ).toMatchObject({ error: { code: "outline.reorder.protected" } });
+      expect(story.listOutlineChildren(project.id, root.id)).toEqual(current);
+    }
+    story.updateOutlineStatus(project.id, current[1]!.id, "planned", now);
+    new SqliteDocumentRepository(database).insert(
+      createDocument({
+        id: randomUUID(),
+        projectId: project.id,
+        kind: "chapter",
+        title: "Manuscript",
+        outlineNodeId: current[1]!.id,
+        now,
+      }),
+    );
+    current = story.listOutlineChildren(project.id, root.id);
+    expect(
+      (await reorder([current[1]!, current[0]!, current[2]!])).json(),
+    ).toMatchObject({ error: { code: "outline.reorder.protected" } });
+    expect(story.listOutlineChildren(project.id, root.id)).toEqual(current);
+  });
+
   it("replays manual project and document creation requests", async () => {
     const { app, database } = await setup();
     const projectRequest = {

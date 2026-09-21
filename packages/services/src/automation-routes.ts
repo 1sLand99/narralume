@@ -1,3 +1,4 @@
+import { requireCurrentChapterOutline } from "@narralume/narrative";
 import {
   AutopilotSessionDetailSchema,
   AutopilotSessionCreatedSchema,
@@ -17,6 +18,7 @@ import {
   SessionActionRequestSchema,
   SessionResolutionRequestSchema,
   StoryCompassSchema,
+  StoryDevelopmentReviewSchema,
   StorySteerSchema,
   SteerDecisionRequestSchema,
   PutCompassRequestSchema,
@@ -32,6 +34,7 @@ import {
   SqliteRunRepository,
   SqliteReviewRepository,
   SqliteStoryRepository,
+  SqliteNarrativeStateRepository,
   type NarrativeDatabase,
 } from "@narralume/persistence";
 import { z } from "zod";
@@ -60,6 +63,7 @@ import {
 } from "@narralume/services";
 import { bootstrapProject } from "@narralume/services";
 import { RunRouteError } from "./route-error.js";
+import { validateLongLineReferences } from "./story-compass.js";
 
 const ProjectParamsSchema = z.object({ projectId: z.string().trim().min(1) });
 const CandidateParamsSchema = z.object({
@@ -328,25 +332,57 @@ export function registerAutomationRoutes(
     const { projectId } = ProjectParamsSchema.parse(request.params);
     requireProject(projects, projectId);
     const input = PutCompassRequestSchema.parse(request.body);
-    const current = automation.getCompass(projectId);
-    if ((current?.version ?? null) !== input.expectedVersion) {
-      throw new AutomationServiceError(
-        "compass.version.conflict",
-        "The story compass was updated by another process; refresh and save again",
-        409,
+    return database.transaction(() => {
+      const current = automation.getCompass(projectId);
+      if ((current?.version ?? null) !== input.expectedVersion) {
+        throw new AutomationServiceError(
+          "compass.version.conflict",
+          "The story compass was updated by another process; refresh and save again",
+          409,
+        );
+      }
+      const { expectedVersion, ...fields } = input;
+      void expectedVersion;
+      validateLongLineReferences(story.listOutline(projectId), input.longLines);
+      return StoryCompassSchema.parse(
+        automation.upsertCompass({
+          projectId,
+          ...fields,
+          version: current?.version ?? 1,
+          updatedAt: new Date().toISOString(),
+        }),
       );
-    }
-    const { expectedVersion, ...fields } = input;
-    void expectedVersion;
-    return StoryCompassSchema.parse(
-      automation.upsertCompass({
-        projectId,
-        ...fields,
-        version: current?.version ?? 1,
-        updatedAt: new Date().toISOString(),
-      }),
-    );
+    });
   });
+
+  app.route(
+    "GET",
+    "/api/projects/:projectId/compass/reviews",
+    async (request) => {
+      const { projectId } = ProjectParamsSchema.parse(request.params);
+      requireProject(projects, projectId);
+      const state = new SqliteNarrativeStateRepository(database, canon, story);
+      return [
+        ...state.listLatestSummaries(projectId, "arc"),
+        ...state.listLatestSummaries(projectId, "volume"),
+      ]
+        .toSorted(
+          (a, b) =>
+            b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id),
+        )
+        .map((review) =>
+          StoryDevelopmentReviewSchema.parse({
+            id: review.id,
+            scopeType: review.scopeType,
+            outlineNodeId: review.scopeId,
+            summary: review.summary,
+            recommendations: review.stateDelta.recommendations ?? [],
+            compassAdjustments: review.stateDelta.compassAdjustments ?? [],
+            createdAt: review.createdAt,
+          }),
+        );
+    },
+  );
 
   app.route(
     "POST",
@@ -488,6 +524,7 @@ export function registerAutomationRoutes(
               );
             }
             const child = runs.getSnapshot(session.currentRunId);
+            requireCurrentChapterOutline(database, child);
             if (
               child.run.status !== "awaiting_user" ||
               latestRunReason(child) !== "scene_plan_approval_required"
@@ -510,6 +547,7 @@ export function registerAutomationRoutes(
               );
             }
             const child = runs.getSnapshot(session.currentRunId).run;
+            requireCurrentChapterOutline(database, runs.getSnapshot(child.id));
             if (
               child.status !== "awaiting_user" ||
               child.mode !== "chapter-gate"

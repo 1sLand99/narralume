@@ -99,6 +99,7 @@ export * from "./persona-card.js";
 export * from "./lore.js";
 export * from "./delivery.js";
 export * from "./story.js";
+export * from "./outline-layout.js";
 
 function normalizeOptionalText(
   value: string | null | undefined,

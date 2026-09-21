@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { outlineChapterSpan } from "@narralume/domain";
 import { Link } from "react-router";
 import { useI18n } from "../../i18n";
 import type { OutlineNode, StoryBible } from "../../lib/api";
+import { StructureActions } from "./structure-actions";
 import { foreshadowStatusLabel, outlineStatusLabel } from "../../lib/labels";
 import { projectWorkspacePath } from "../../lib/project-route";
 
@@ -25,18 +27,17 @@ export function StoryBoard({ bible }: { bible: StoryBible }) {
   );
   const chapterLink = (id: string) =>
     `${projectWorkspacePath(bible.project.id, "studio")}?outline=${encodeURIComponent(id)}`;
-  const span = (id: string | null): [number, number] | null => {
-    const node = id ? byId.get(id) : undefined;
-    if (!node) return null;
-    const indices = chapters.flatMap((chapter, index) =>
-      chapter.id === node.id ||
-      chapter.path.startsWith(`${node.path}/`) ||
-      node.path.startsWith(`${chapter.path}/`)
-        ? [index]
-        : [],
+  const span = (id: string | null) => outlineChapterSpan(bible.outline, id);
+  const invertedClues = bible.foreshadows.filter((clue) => {
+    const from = span(clue.targetFromNodeId),
+      to = span(clue.targetToNodeId);
+    return (
+      !["resolved", "abandoned"].includes(clue.status) &&
+      from &&
+      to &&
+      from[0] > to[1]
     );
-    return indices.length ? [indices[0]!, indices.at(-1)!] : null;
-  };
+  });
   const pathLabel = (chapter: OutlineNode) => {
     const titles: string[] = [];
     let parent = chapter.parentId ? byId.get(chapter.parentId) : undefined;
@@ -103,6 +104,35 @@ export function StoryBoard({ bible }: { bible: StoryBible }) {
           </select>
         </label>
       </div>
+      <p>{t("bible.board.reorderHint")}</p>
+      {status !== "all" || pov !== "all" ? (
+        <p>{t("bible.board.reorderFiltered")}</p>
+      ) : null}
+      {invertedClues.length ? (
+        <aside
+          className="story-board__window-warning"
+          aria-label={t("bible.board.windowWarnings")}
+        >
+          <h3>{t("bible.board.windowWarnings")}</h3>
+          <p>{t("bible.board.invertedWindow")}</p>
+          <ul>
+            {invertedClues.map((clue) => (
+              <li key={clue.id}>
+                {clue.title} ·{" "}
+                {t("bible.board.window", {
+                  from: boundLabel(clue.targetFromNodeId),
+                  to: boundLabel(clue.targetToNodeId),
+                })}
+              </li>
+            ))}
+          </ul>
+          <Link
+            to={`${projectWorkspacePath(bible.project.id, "bible")}?spread=foreshadows`}
+          >
+            {t("bible.board.editWindows")}
+          </Link>
+        </aside>
+      ) : null}
       {!chapters.length ? (
         <p>{t("bible.board.empty")}</p>
       ) : !visible.length ? (
@@ -136,6 +166,11 @@ export function StoryBoard({ bible }: { bible: StoryBible }) {
             >
               <p className="story-board__path">{pathLabel(chapter)}</p>
               <h3>{chapter.title}</h3>
+              <StructureActions
+                bible={bible}
+                chapter={chapter}
+                filtered={status !== "all" || pov !== "all"}
+              />
               <p>
                 {outlineStatusLabel(chapter.status)} ·{" "}
                 {t("bible.board.povValue", {

@@ -129,6 +129,90 @@ beforeEach(() => {
 afterEach(() => database.close());
 
 describe("ChapterWorkerSuite", () => {
+  it("checks the order again after asynchronous indexing and lets a fresh run use the new order", async () => {
+    const story = new SqliteStoryRepository(database);
+    const root = story.requireOutlineNode("p1", "book");
+    story.insertOutlineNode(
+      createOutlineNode({
+        id: "next-chapter",
+        projectId: "p1",
+        parent: root,
+        kind: "chapter",
+        ordinal: 1,
+        title: "Next",
+        now,
+      }),
+    );
+    let reordered = false;
+    const model = {
+      ...scriptedModel(
+        "雾从海面推上石阶。林昼把手按在冰冷的门上，听见灯塔深处传来第三下钟声。\n\n灯灭的一刻，父亲忽然问她为何对着空椅子说话。",
+      ),
+      hasEmbeddingAssignment: () => true,
+      async embed(_run: unknown, _step: unknown, purpose: string) {
+        if (purpose === "chapter-index" && !reordered) {
+          reordered = true;
+          database.transaction(() => {
+            story.updateOutlineOrdinal("p1", chapterId, 2, now);
+            story.updateOutlineOrdinal("p1", "next-chapter", 0, now);
+            story.updateOutlineOrdinal("p1", chapterId, 1, now);
+          });
+        }
+        return {
+          vectors: [],
+          model: "test",
+          modelId: null,
+          usage: {
+            inputTokens: 0,
+            outputTokens: 0,
+            calls: 0,
+            costUsd: 0,
+            wallTimeMs: 0,
+          },
+        };
+      },
+    } as unknown as NarrativeModelClient;
+    const suite = new ChapterWorkerSuite(database, model, () => new Date(now));
+    const supervisor = new HarnessSupervisor(runs, suite.registry(), {
+      now: () => new Date(now),
+    });
+    for (const runId of ["old-order", "fresh-order"]) {
+      const recipe = buildChapterRecipe(runId, 0);
+      runs.create({
+        id: runId,
+        projectId: "p1",
+        recipe: recipe.name,
+        recipeVersion: recipe.version,
+        mode: "autopilot",
+        targetOutlineNodeId: chapterId,
+        policy: { minChapterCharacters: 20, chapterApproved: true },
+        steps: recipe.steps,
+        now,
+      });
+      for (let index = 0; index < 25; index += 1) {
+        if (!(await supervisor.processNext("order-test"))) break;
+      }
+      const snapshot = runs.getSnapshot(runId);
+      if (runId === "old-order") {
+        expect(reordered).toBe(true);
+        expect(snapshot.run.status).toBe("failed");
+        expect(
+          snapshot.steps.find((step) => step.kind === "chapter.commit")?.error
+            ?.code,
+        ).toBe("outline.context.stale");
+        expect(new SqliteDocumentRepository(database).list("p1")).toEqual([]);
+      } else {
+        expect(
+          snapshot.run.status,
+          JSON.stringify(snapshot.steps.map((step) => step.error)),
+        ).toBe("completed");
+        expect(new SqliteDocumentRepository(database).list("p1")).toHaveLength(
+          1,
+        );
+      }
+    }
+  });
+
   it("produces, reviews, settles, and commits a chapter through the harness", async () => {
     const manuscript =
       "雾从海面推上石阶。林昼把手按在冰冷的门上，听见灯塔深处传来第三下钟声。\n\n灯灭的一刻，父亲忽然问她为何对着空椅子说话。";

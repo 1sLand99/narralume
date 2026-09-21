@@ -2,6 +2,7 @@ import { randomUuid, sha256Hex } from "@narralume/domain";
 import {
   AUTOMATION_DEFAULTS,
   PersonaCardProfileSchema,
+  StoryLongLineSchema,
 } from "@narralume/contracts";
 import { decodeBase64 as decodeBase64Bytes } from "./internal/bytes.js";
 import { declaredUncompressedSize } from "./internal/zip.js";
@@ -1987,6 +1988,29 @@ export class DeliveryService {
     }
     if (bundle.compass) {
       const target = objectField(bundle.compass, "target");
+      const longLines = z
+        .array(StoryLongLineSchema)
+        .parse(bundle.compass.longLines)
+        .map((line) => ({
+          ...line,
+          ...(line.development
+            ? {
+                development: {
+                  ...line.development,
+                  scopeNodeId: line.development.scopeNodeId
+                    ? required(
+                        nodeMap.get(line.development.scopeNodeId) ?? null,
+                        "story line scope",
+                      )
+                    : null,
+                  evidenceChapterIds: line.development.evidenceChapterIds.map(
+                    (id) =>
+                      required(nodeMap.get(id) ?? null, "story line evidence"),
+                  ),
+                },
+              }
+            : {}),
+        }));
       this.automation.upsertCompass({
         projectId,
         corePromise:
@@ -1994,11 +2018,7 @@ export class DeliveryService {
           bundle.project.premise ??
           "继续兑现作品的核心承诺",
         endingDirection: stringField(bundle.compass, "endingDirection"),
-        longLines: recordArray(bundle.compass.longLines).map((line) => ({
-          title: stringField(line, "title") ?? "长线",
-          promise: stringField(line, "promise") ?? "待推进",
-          status: stringField(line, "status") ?? "active",
-        })),
+        longLines,
         themeQuestions: stringArray(bundle.compass.themeQuestions),
         target: {
           chapters: boundedNumber(
@@ -3365,15 +3385,6 @@ function stringArray(value: unknown): string[] {
     ? value.filter(
         (item): item is string =>
           typeof item === "string" && Boolean(item.trim()),
-      )
-    : [];
-}
-
-function recordArray(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value)
-    ? value.filter(
-        (item): item is Record<string, unknown> =>
-          Boolean(item) && typeof item === "object" && !Array.isArray(item),
       )
     : [];
 }

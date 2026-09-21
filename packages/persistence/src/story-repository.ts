@@ -178,8 +178,57 @@ export class SqliteStoryRepository {
     return this.requireOutlineNode(projectId, id);
   }
 
+  updateOutlineOrdinal(
+    projectId: string,
+    id: string,
+    ordinal: number,
+    updatedAt: string,
+  ): void {
+    const result = this.database.raw
+      .prepare(
+        "UPDATE outline_nodes SET ordinal = ?, updated_at = ? WHERE project_id = ? AND id = ?",
+      )
+      .run(ordinal, updatedAt, projectId, id);
+    if (result.changes !== 1)
+      throw new PersistenceNotFoundError("outline_node", id);
+  }
+
+  updateOutlinePlacement(
+    projectId: string,
+    node: Pick<OutlineNode, "id" | "parentId" | "ordinal" | "path" | "depth">,
+    updatedAt: string,
+  ): void {
+    const result = this.database.raw
+      .prepare(
+        "UPDATE outline_nodes SET parent_id = ?, ordinal = ?, path = ?, depth = ?, updated_at = ? WHERE project_id = ? AND id = ?",
+      )
+      .run(
+        node.parentId,
+        node.ordinal,
+        node.path,
+        node.depth,
+        updatedAt,
+        projectId,
+        node.id,
+      );
+    if (result.changes !== 1)
+      throw new PersistenceNotFoundError("outline_node", node.id);
+  }
+
   countOutlineReferences(id: string): number {
-    return totalReferenceCount(this.database, "outline_nodes", id);
+    const compassReferences = this.database.raw
+      .prepare(
+        `
+      SELECT COUNT(*) AS count FROM story_compasses compass, json_each(compass.long_lines_json) line
+      WHERE json_extract(line.value, '$.development.scopeNodeId') = ?
+        OR EXISTS (SELECT 1 FROM json_each(line.value, '$.development.evidenceChapterIds') evidence WHERE evidence.value = ?)
+    `,
+      )
+      .get(id, id) as { count: number };
+    return (
+      totalReferenceCount(this.database, "outline_nodes", id) +
+      compassReferences.count
+    );
   }
 
   deleteOutlineNode(projectId: string, id: string): boolean {

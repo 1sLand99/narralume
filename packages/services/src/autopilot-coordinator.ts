@@ -66,6 +66,12 @@ export class AutopilotCoordinator {
 
   async advanceSession(sessionId: string): Promise<boolean> {
     if (this.#controller.signal.aborted) return false;
+    // A child link, its chapter outcome and the session cursor are one durable
+    // transition. Recovery must never observe only part of an advance.
+    return this.database.transaction(() => this.advanceSessionState(sessionId));
+  }
+
+  private advanceSessionState(sessionId: string): boolean {
     const now = this.now().toISOString();
     this.automation.reconcileSteerClassifications(sessionId, now);
     const session = this.automation.requireSession(sessionId);
@@ -78,7 +84,9 @@ export class AutopilotCoordinator {
         if (!["completed", "failed", "cancelled"].includes(child.status)) {
           if (!child.cancelRequested) {
             this.runs.requestCancel(child.id, now);
-            this.runCoordinator.interrupt(child.id, "autopilot_cancelled");
+            this.database.afterCommit(() =>
+              this.runCoordinator.interrupt(child.id, "autopilot_cancelled"),
+            );
             this.wakeRunWorker();
             return this.changed(session.id, "child.cancel_requested");
           }
@@ -381,7 +389,12 @@ export class AutopilotCoordinator {
           const child = this.runs.getSnapshot(session.currentRunId).run;
           if (!["completed", "failed", "cancelled"].includes(child.status)) {
             this.runs.requestCancel(child.id, now);
-            this.runCoordinator.interrupt(child.id, "steer_immediate_current");
+            this.database.afterCommit(() =>
+              this.runCoordinator.interrupt(
+                child.id,
+                "steer_immediate_current",
+              ),
+            );
             this.wakeRunWorker();
           }
         }
@@ -525,11 +538,13 @@ export class AutopilotCoordinator {
   }
 
   private wakeRunWorker(): void {
-    if (this.autoRunWorker) this.runCoordinator.wake();
+    if (this.autoRunWorker) {
+      this.database.afterCommit(() => this.runCoordinator.wake());
+    }
   }
 
   private changed(sessionId: string, action: string): true {
-    this.onChange(sessionId, action);
+    this.database.afterCommit(() => this.onChange(sessionId, action));
     return true;
   }
 }

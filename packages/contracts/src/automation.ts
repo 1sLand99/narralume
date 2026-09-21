@@ -30,13 +30,32 @@ export const AUTOMATION_DEFAULTS = {
   volumes: 1,
 } as const;
 
+export const StoryLongLineSchema = z.object({
+  title: z.string().trim().min(1).max(300),
+  promise: z.string().trim().min(1).max(4_000),
+  status: z.enum(["open", "developing", "resolved"]),
+  development: z
+    .object({
+      scopeNodeId: IdSchema.nullable(),
+      stageGoal: z.string().trim().max(4_000),
+      progress: z.string().trim().max(4_000),
+      openPromises: z.array(z.string().trim().min(1).max(1_000)),
+      nextDevelopment: z.string().trim().max(4_000),
+      evidenceChapterIds: z
+        .array(IdSchema)
+        .refine(
+          (ids) => new Set(ids).size === ids.length,
+          "Evidence chapter IDs must be unique",
+        ),
+    })
+    .optional(),
+});
+
 export const StoryCompassSchema = z.object({
   projectId: IdSchema,
   corePromise: z.string(),
   endingDirection: z.string().nullable(),
-  longLines: z.array(
-    z.object({ title: z.string(), promise: z.string(), status: z.string() }),
-  ),
+  longLines: z.array(StoryLongLineSchema),
   themeQuestions: z.array(z.string()),
   target: z.object({
     chapters: z.number().int().positive(),
@@ -325,6 +344,16 @@ export const PlanningReviewSchema = z.object({
   createdAt: TimestampSchema,
 });
 
+export const StoryDevelopmentReviewSchema = z.object({
+  id: IdSchema,
+  scopeType: z.enum(["arc", "volume"]),
+  outlineNodeId: IdSchema,
+  summary: z.string(),
+  recommendations: z.array(z.string()),
+  compassAdjustments: z.array(z.string()),
+  createdAt: TimestampSchema,
+});
+
 export const AutopilotSessionDetailSchema = z.object({
   session: AutopilotSessionSchema,
   links: z.array(AutopilotRunLinkSchema),
@@ -356,6 +385,10 @@ export const AutopilotSessionDetailSchema = z.object({
 });
 
 export type StoryCompassDto = z.infer<typeof StoryCompassSchema>;
+export type StoryLongLineDto = z.infer<typeof StoryLongLineSchema>;
+export type StoryDevelopmentReviewDto = z.infer<
+  typeof StoryDevelopmentReviewSchema
+>;
 export type FoundationCandidateSetDto = z.infer<
   typeof FoundationCandidateSetSchema
 >;

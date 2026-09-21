@@ -340,6 +340,7 @@ export function AutopilotWorkspace() {
             <StartSessionForm key={`session-${createSessionMutation.data?.id ?? "new"}`} projectId={projectId} compass={compassQuery.data ?? null} pending={createSessionMutation.isPending} error={createSessionMutation.error} maxChapters={usesTrialRelay ? TRIAL_RELAY_AUTOPILOT_CHAPTER_LIMIT : AUTOMATION_LIMITS.targetChapters} usesTrialRelay={usesTrialRelay} onSubmit={(input) => createSessionMutation.mutate(input)} />
           )}
         </div>
+        <Link className="autopilot__setup-link" to={`${projectWorkspacePath(projectId, "bible")}?spread=outline&view=lines`}>{t("bible.lines.manage")}</Link>
         <CompassCard detail={detail} reports={reviewQuery.data?.reports ?? []} />
         <CommandDeck
           sessions={sessions}

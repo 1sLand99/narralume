@@ -3,9 +3,11 @@ import {
   SqliteRetrievalRepository,
   SqliteReviewRepository,
   SqliteStoryRepository,
+  SqliteRunRepository,
   type NarrativeDatabase,
   type ReviewRevisionProposalDetail,
 } from "@narralume/persistence";
+import { requireCurrentChapterOutline } from "./outline-baseline.js";
 
 export interface RevisionApplicationResult {
   proposal: ReviewRevisionProposalDetail;
@@ -66,6 +68,10 @@ export class RevisionApplicationService {
           "revision_proposal.base_stale",
           `Document advanced from ${proposal.baseDocumentVersionId} to ${document.currentVersionId}`,
         );
+      requireCurrentChapterOutline(
+        this.database,
+        new SqliteRunRepository(this.database).getSnapshot(proposal.runId),
+      );
       const version = this.documents.appendVersion(
         input.projectId,
         document.id,
