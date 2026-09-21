@@ -192,6 +192,9 @@ export function StoryBoard({ bible }: { bible: StoryBible }) {
               <Link className="btn" to={chapterLink(chapter.id)}>
                 {t("bible.board.openChapter")}
               </Link>
+              <Link className="btn" to={`${projectWorkspacePath(bible.project.id, "bible")}?spread=outline&view=state&chapter=${encodeURIComponent(chapter.id)}`}>
+                {t("bible.state.openChapterState")}
+              </Link>
               {clues.length ? (
                 <details>
                   <summary>

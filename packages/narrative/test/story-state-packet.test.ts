@@ -544,6 +544,7 @@ describe("StoryStatePacketBuilder", () => {
     const second = builder.build(request);
     expect(second).toEqual(first);
     expect(first.counts.timelineEvents).toBe(25);
+    expect(builder.snapshot(request).timeline).toHaveLength(119);
     const text = first.sources.map((source) => source.content).join("\n");
     expect(text).toContain("guard the chain");
     expect(text).not.toContain("leave the harbor");

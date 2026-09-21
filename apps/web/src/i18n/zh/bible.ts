@@ -1,5 +1,7 @@
 /* 故事圣经：Canon Spread 阅读面、人工编辑器与 AI 候选桌。 */
+import { storyState } from "./story-state";
 export const bible = {
+  state: storyState,
   lines: {
     title: "长期故事线", hint: "把全书承诺与当前阶段放在一起看。阶段信息由你确认和维护，保存后会供后续规划参考。",
     manage: "查看与维护长期故事线", add: "新增故事线", edit: "编辑故事线", remove: "移除故事线",
@@ -17,6 +19,7 @@ export const bible = {
     reviewsError: "阶段复盘暂时无法加载", noReviews: "连续创作完成一个窗口后，阶段复盘会出现在这里。", recommendations: "后续建议", compassAdjustments: "全书方向调整建议",
   },
   board: {
+    state: "章节状态",
     lines: "长期故事线",
     invertedWindowLabel: "窗口倒置",
     moveTo: "移到…", moveToLabel: "移动「{title}」到其他位置", previewTitle: "查看结构调整影响", applyChange: "保存结构调整", previewChange: "重新预览影响",

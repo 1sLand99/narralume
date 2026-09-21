@@ -1,6 +1,8 @@
 import type { bible as bibleZh } from "../zh/bible";
+import { storyState } from "./story-state";
 
 export const bible: typeof bibleZh = {
+  state: storyState,
   lines: {
     title: "Long story lines", hint: "See book-wide promises alongside the current stage. You maintain these stage records; saved changes inform subsequent planning.",
     manage: "View and maintain long story lines", add: "Add story line", edit: "Edit story line", remove: "Remove story line",
@@ -18,6 +20,7 @@ export const bible: typeof bibleZh = {
     reviewsError: "Stage reviews could not be loaded", noReviews: "Stage reviews appear here after continuous writing completes a window.", recommendations: "Suggestions for later chapters", compassAdjustments: "Suggested book direction changes",
   },
   board: {
+    state: "Chapter state",
     lines: "Long story lines",
     invertedWindowLabel: "Inverted window",
     moveTo: "Move to…", moveToLabel: "Move “{title}” to another location", previewTitle: "Review structure change", applyChange: "Save structure change", previewChange: "Refresh impact preview",

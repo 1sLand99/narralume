@@ -54,6 +54,8 @@ test("本地内核 UI 主链：建项目 → 大纲 → 写作 → 版本持久 
   await expect(page).toHaveURL(
     new RegExp(`/projects/${projectId}/studio\\?outline=`),
   );
+  const chapterId = new URL(page.url()).searchParams.get("outline")!;
+  expect(chapterId).toBeTruthy();
 
   // 写作台：创建文档 + 手写正文并保存版本（手动创作永远可用）。
   await page.getByRole("button", { name: "创建" }).click();
@@ -71,6 +73,18 @@ test("本地内核 UI 主链：建项目 → 大纲 → 写作 → 版本持久 
   );
   await expect(editor).toBeVisible();
   await expect(editor).toHaveValue(/灯塔突然熄灭/);
+
+  // The same chapter-state route also runs in the browser's local database.
+  await page.goto(
+    `/projects/${projectId}/bible?spread=outline&view=state&chapter=${encodeURIComponent(chapterId)}`,
+  );
+  const stateView = page.getByRole("region", { name: "章节状态", exact: true });
+  await expect(stateView.getByLabel("查看到哪一章")).toHaveValue(chapterId);
+  await expect(
+    stateView.getByText(
+      "截至本章尚未登记相关认知，不能据此判断人物或读者不知道。",
+    ),
+  ).toBeVisible();
 
   // runs 账本在 local 驱动下可用（运行中心空态；窄屏导航折叠，直接按地址访问）。
   await page.goto(`/projects/${projectId}/runs`);

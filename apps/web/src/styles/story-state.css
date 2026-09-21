@@ -1,0 +1,114 @@
+.story-state {
+  display: grid;
+  gap: 1.5rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.story-state h2,
+.story-state h3 {
+  margin: 0;
+}
+.story-state header > p,
+.story-state__hint {
+  color: var(--ink-soft);
+  max-width: 76ch;
+  line-height: 1.7;
+}
+.story-state__filters {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 1rem;
+}
+.story-state__filters label {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.story-state__filters select {
+  min-width: 0;
+  width: 100%;
+  padding: 0.7rem;
+  border: 1px solid var(--hairline);
+  color: inherit;
+  background: var(--paper);
+  font: inherit;
+}
+.story-state__position {
+  padding: 0.8rem 1rem;
+  margin: 0;
+  border-left: 3px solid var(--canon);
+  background: var(--paper);
+}
+.story-state__section-head,
+.story-state__card header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+.story-state__count {
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+  margin-left: 0.5rem;
+  font-weight: normal;
+}
+.story-state__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
+  gap: 0.85rem;
+}
+.story-state__card {
+  padding: 1rem;
+  border: 1px solid var(--hairline);
+  background: var(--paper);
+  min-width: 0;
+}
+.story-state__card p {
+  white-space: pre-wrap;
+}
+.story-state__belief {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--hairline);
+}
+.story-state__belief[data-belief="false_belief"],
+.story-state__belief[data-belief="suspected"] {
+  color: var(--vera-deep);
+  background: var(--vera-soft);
+}
+.story-state__evidence {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  margin-top: 0.7rem;
+}
+.story-state__empty {
+  padding: 1rem;
+  border: 1px dashed var(--hairline);
+  color: var(--ink-soft);
+  line-height: 1.7;
+}
+.story-state__reference {
+  padding-top: 1rem;
+  border-top: 1px solid var(--hairline);
+}
+.story-state__reference summary {
+  cursor: pointer;
+}
+.story-state__reference-list {
+  list-style: none;
+  padding: 0;
+}
+.story-state__reference-list li {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--hairline);
+}
+@media (max-width: 640px) {
+  .story-state__filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

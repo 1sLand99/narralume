@@ -33,6 +33,8 @@ export const errors = {
   },
   /* 主文案：键为后端错误码的 camelCase 形式；ApiError 命中即用本地化文案。 */
   message: {
+    storyStateChapterUnavailable: "所选章节不存在或已废弃，请重新选择。",
+    storyStateCharacterUnavailable: "所选人物不属于本作品或已不可用，请重新选择。",
     trialAutopilotChapterLimit:
       "内置体验模型每次最多连续创作 3 章；如需更多，请在设置中添加自己的模型渠道并设为默认生成模型。",
     downloadUnsupported: "当前驱动不支持库导出",

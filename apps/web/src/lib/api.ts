@@ -1,4 +1,6 @@
 import {
+  type StoryStateQuery,
+  type StoryStateSnapshotDto,
   type OutlineChangeRequest,
   type OutlineChangePreview,
   MIN_VIABLE_PARTIAL_CHARACTERS,
@@ -1702,6 +1704,11 @@ export async function getStoryBible(
     `/api/projects/${encodeURIComponent(projectId)}/story-bible`,
     signal ? { signal } : {},
   );
+}
+
+export async function getStoryState(projectId: string, input: StoryStateQuery, signal?: AbortSignal): Promise<StoryStateSnapshotDto> {
+  const query = new URLSearchParams(input);
+  return requestJson(`/api/projects/${encodeURIComponent(projectId)}/story-state?${query}`, signal ? { signal } : {});
 }
 
 export async function startCanonCandidate(

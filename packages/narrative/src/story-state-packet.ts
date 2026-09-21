@@ -2,12 +2,9 @@ import { sha256Hex } from "@narralume/domain";
 
 import { canonContextSources, type ContextSource } from "@narralume/context";
 import {
-  canAccessFact,
-  type CanonAccess,
   type CanonEntity,
   type CanonFact,
   type Foreshadow,
-  type KnowledgeRecord,
   type OutlineNode,
   type RelationshipEvent,
   type TimelineEvent,
@@ -18,13 +15,17 @@ import type {
   SqliteStoryRepository,
 } from "@narralume/persistence";
 
-export type StoryStateAudience = "author" | "reader" | "character";
+import {
+  selectStoryState,
+  nodeIsNotAfterTarget,
+  nodeOrder,
+  type OutlineScope,
+  type StoryKnowledge,
+  type StoryStateRequest,
+} from "./story-state-selection.js";
+export type { StoryStateAudience } from "./story-state-selection.js";
 
-export interface StoryStatePacketRequest {
-  projectId: string;
-  audience: StoryStateAudience;
-  characterId?: string | null;
-  targetOutlineNodeId?: string | null;
+export interface StoryStatePacketRequest extends StoryStateRequest {
   focalEntityIds?: readonly string[];
   recentChapterWindow?: number;
   maxTimelineEvents?: number;
@@ -55,52 +56,65 @@ export class StoryStatePacketBuilder {
     private readonly story: SqliteStoryRepository,
   ) {}
 
-  build(request: StoryStatePacketRequest): StoryStatePacket {
-    validateAudience(request);
-    const outline = this.story.listOutline(request.projectId);
-    const scope = buildOutlineScope(outline, request.targetOutlineNodeId);
-    if (request.targetOutlineNodeId && !scope.targetNode) {
-      throw new Error(
-        `story-state target outline node ${request.targetOutlineNodeId} does not exist`,
-      );
-    }
-    const focalEntityIds = resolveFocalEntityIds(request, scope);
-    const entities = this.canon.listEntities(request.projectId);
-    const entityById = new Map(entities.map((entity) => [entity.id, entity]));
-    const allFacts = effectiveFactsAtTarget(
-      this.canon.listFactHistory(request.projectId),
-      scope,
-    );
-    const access = canonAccess(request);
-    const facts = allFacts.filter((fact) => canAccessFact(fact, access));
-    const knowledge = visibleKnowledge(
-      this.state.listKnowledge(request.projectId),
+  /** Full projection for the author UI; prompt ranking/budgets are applied only in build. */
+  snapshot(request: StoryStateRequest) {
+    const selected = selectStoryState(
+      this.canon,
+      this.state,
+      this.story,
       request,
-    ).filter((record) => nodeIsNotAfterTarget(record.learnedAtNodeId, scope));
-    const knowledgeFactIds = new Set(
-      knowledge
-        .map((record) => record.factId)
-        .filter((id): id is string => Boolean(id)),
     );
+    return {
+      entities: selected.entities.map(({ id, name, type, status }) => ({
+        id,
+        name,
+        type,
+        status,
+      })),
+      facts: selected.facts,
+      knowledge: selected.knowledge,
+      relationships: selected.relationships,
+      timeline: selected.timeline,
+      foreshadows: selected.foreshadows.map((item) => ({
+        id: item.id,
+        title: item.title,
+        description: item.description,
+        currentStatus: item.status,
+        importance: item.importance,
+        targetFromNodeId: item.targetFromNodeId,
+        targetToNodeId: item.targetToNodeId,
+        evidenceNodeIds: item.evidenceNodeIds.filter((id) =>
+          nodeIsNotAfterTarget(id, selected.scope),
+        ),
+        resolutionNodeId:
+          item.resolutionNodeId &&
+          nodeIsNotAfterTarget(item.resolutionNodeId, selected.scope)
+            ? item.resolutionNodeId
+            : null,
+      })),
+    };
+  }
+
+  build(request: StoryStatePacketRequest): StoryStatePacket {
+    const {
+      scope,
+      access,
+      entities,
+      facts,
+      knowledge,
+      relationships: allRelationships,
+      timeline: visibleEvents,
+      foreshadows: plans,
+    } = selectStoryState(this.canon, this.state, this.story, request);
+    const focalEntityIds = resolveFocalEntityIds(request, scope);
+    const entityById = new Map(entities.map((entity) => [entity.id, entity]));
     const knowledgeTimelineIds = new Set(
       knowledge
-        .map((record) => record.timelineEventId)
+        .filter((item) => item.record.belief === "known")
+        .map((item) => item.record.timelineEventId)
         .filter((id): id is string => Boolean(id)),
     );
-    const visibleFacts = rankFacts(
-      uniqueById([
-        ...facts,
-        ...allFacts.filter((fact) => knowledgeFactIds.has(fact.id)),
-      ]),
-      focalEntityIds,
-    );
-    const allRelationships = visibleRelationships(
-      currentRelationshipsAtTarget(
-        this.state.listRelationshipHistory(request.projectId),
-        scope,
-      ),
-      request,
-    );
+    const visibleFacts = rankFacts(facts, focalEntityIds);
     const relatedEntityIds = expandRelatedEntityIds(
       focalEntityIds,
       visibleFacts,
@@ -113,11 +127,7 @@ export class StoryStatePacketBuilder {
       scope,
     ).slice(0, bounded(request.maxRelationships, 80));
     const timeline = recallTimeline(
-      visibleTimeline(
-        this.state.listTimeline(request.projectId),
-        request,
-        knowledgeTimelineIds,
-      ),
+      visibleEvents,
       focalEntityIds,
       relatedEntityIds,
       knowledgeTimelineIds,
@@ -125,13 +135,14 @@ export class StoryStatePacketBuilder {
       bounded(request.recentChapterWindow, 8),
       bounded(request.maxTimelineEvents, 80),
     );
-    const foreshadows = visibleForeshadows(
-      this.state.listForeshadows(request.projectId),
-      request,
+    const foreshadows = plans.filter(
+      (item) => item.status !== "abandoned" && item.status !== "resolved",
     );
 
     const sources: ContextSource[] = canonContextSources(
-      entities,
+      request.audience === "author"
+        ? entities
+        : entities.map((entity) => ({ ...entity, description: null })),
       visibleFacts,
       access,
     ).map((source) => ({
@@ -195,9 +206,7 @@ export class StoryStatePacketBuilder {
             ? "当前角色明确知道或相信的内容"
             : "人物与读者认知状态",
         content: knowledge
-          .map((record) =>
-            knowledgeLine(record, visibleFacts, timeline, entityById),
-          )
+          .map((item) => knowledgeLine(item, entityById))
           .filter(Boolean)
           .join("\n"),
         authority: "confirmed",
@@ -238,7 +247,7 @@ export class StoryStatePacketBuilder {
         relationshipIds: relationships.map((event) => event.id),
         timelineIds: timeline.map((event) => event.id),
         foreshadowIds: foreshadows.map((item) => item.id),
-        knowledgeIds: knowledge.map((record) => record.id),
+        knowledgeIds: knowledge.map((item) => item.record.id),
       }),
     );
     return {
@@ -253,72 +262,6 @@ export class StoryStatePacketBuilder {
       },
     };
   }
-}
-
-function canonAccess(request: StoryStatePacketRequest): CanonAccess {
-  if (request.audience === "character") {
-    return {
-      audience: "character",
-      ...(request.characterId ? { characterId: request.characterId } : {}),
-      includeCandidates: false,
-    };
-  }
-  return { audience: request.audience, includeCandidates: false };
-}
-
-function validateAudience(request: StoryStatePacketRequest): void {
-  if (request.audience === "character" && !request.characterId) {
-    throw new Error("character story-state packets require characterId");
-  }
-}
-
-function visibleKnowledge(
-  records: readonly KnowledgeRecord[],
-  request: StoryStatePacketRequest,
-): KnowledgeRecord[] {
-  if (request.audience === "author") return [...records];
-  if (request.audience === "reader")
-    return records.filter((record) => record.knowerType === "reader");
-  return records.filter(
-    (record) =>
-      record.knowerType === "character" &&
-      record.knowerEntityId === request.characterId,
-  );
-}
-
-function visibleRelationships(
-  events: readonly RelationshipEvent[],
-  request: StoryStatePacketRequest,
-): RelationshipEvent[] {
-  if (request.audience !== "character") return [...events];
-  return events.filter(
-    (event) =>
-      event.fromEntityId === request.characterId ||
-      event.toEntityId === request.characterId,
-  );
-}
-
-function visibleTimeline(
-  events: readonly TimelineEvent[],
-  request: StoryStatePacketRequest,
-  knownIds: ReadonlySet<string>,
-): TimelineEvent[] {
-  if (request.audience === "author") return [...events];
-  if (request.audience === "reader")
-    return events.filter((event) => event.visibility !== "author_secret");
-  return events.filter(
-    (event) => event.visibility === "omniscient" || knownIds.has(event.id),
-  );
-}
-
-function visibleForeshadows(
-  foreshadows: readonly Foreshadow[],
-  request: StoryStatePacketRequest,
-): Foreshadow[] {
-  if (request.audience !== "author") return [];
-  return foreshadows.filter(
-    (item) => item.status !== "abandoned" && item.status !== "resolved",
-  );
 }
 
 function rankRelationships(
@@ -427,55 +370,6 @@ function tierForeshadows(
   ] as const;
 }
 
-interface OutlineScope {
-  nodeOrder: ReadonlyMap<string, number>;
-  chapterOrder: ReadonlyMap<string, number>;
-  chapterByNode: ReadonlyMap<string, string>;
-  nodeById: ReadonlyMap<string, OutlineNode>;
-  targetNode: OutlineNode | null;
-  targetNodeOrder: number | null;
-  targetChapterOrder: number | null;
-}
-
-function buildOutlineScope(
-  outline: readonly OutlineNode[],
-  targetOutlineNodeId: string | null | undefined,
-): OutlineScope {
-  const nodeById = new Map(outline.map((node) => [node.id, node]));
-  const nodeOrder = new Map(outline.map((node, index) => [node.id, index]));
-  const chapterOrder = new Map(
-    outline
-      .filter((node) => node.kind === "chapter")
-      .map((node, index) => [node.id, index]),
-  );
-  const chapterByNode = new Map<string, string>();
-  for (const node of outline) {
-    let cursor: OutlineNode | undefined = node;
-    while (cursor && cursor.kind !== "chapter") {
-      cursor = cursor.parentId ? nodeById.get(cursor.parentId) : undefined;
-    }
-    if (cursor?.kind === "chapter") chapterByNode.set(node.id, cursor.id);
-  }
-  const targetChapterId = targetOutlineNodeId
-    ? chapterByNode.get(targetOutlineNodeId)
-    : undefined;
-  return {
-    nodeOrder,
-    chapterOrder,
-    chapterByNode,
-    nodeById,
-    targetNode: targetOutlineNodeId
-      ? (nodeById.get(targetOutlineNodeId) ?? null)
-      : null,
-    targetNodeOrder: targetOutlineNodeId
-      ? (nodeOrder.get(targetOutlineNodeId) ?? null)
-      : null,
-    targetChapterOrder: targetChapterId
-      ? (chapterOrder.get(targetChapterId) ?? null)
-      : null,
-  };
-}
-
 function resolveFocalEntityIds(
   request: StoryStatePacketRequest,
   scope: OutlineScope,
@@ -491,53 +385,6 @@ function resolveFocalEntityIds(
     if (povEntityId) ids.add(povEntityId);
   }
   return ids;
-}
-
-function factActiveAtTarget(fact: CanonFact, scope: OutlineScope): boolean {
-  if (scope.targetNodeOrder === null) return true;
-  const validFrom = fact.validFromNodeId
-    ? scope.nodeOrder.get(fact.validFromNodeId)
-    : undefined;
-  const validTo = fact.validToNodeId
-    ? scope.nodeOrder.get(fact.validToNodeId)
-    : undefined;
-  const validToNode = fact.validToNodeId
-    ? scope.nodeById.get(fact.validToNodeId)
-    : undefined;
-  return Boolean(
-    (validFrom === undefined || validFrom <= scope.targetNodeOrder) &&
-    (validTo === undefined ||
-      validTo >= scope.targetNodeOrder ||
-      (validToNode && nodeContains(validToNode, scope.targetNode))),
-  );
-}
-
-function effectiveFactsAtTarget(
-  facts: readonly CanonFact[],
-  scope: OutlineScope,
-): CanonFact[] {
-  const active = facts.filter((fact) => factActiveAtTarget(fact, scope));
-  const supersededIds = new Set(
-    active
-      .map((fact) => fact.supersedesFactId)
-      .filter((id): id is string => Boolean(id)),
-  );
-  return active.filter((fact) => !supersededIds.has(fact.id));
-}
-
-function currentRelationshipsAtTarget(
-  events: readonly RelationshipEvent[],
-  scope: OutlineScope,
-): RelationshipEvent[] {
-  const eligible = events.filter((event) =>
-    nodeIsNotAfterTarget(event.outlineNodeId, scope),
-  );
-  const supersededIds = new Set(
-    eligible
-      .map((event) => event.supersedesEventId)
-      .filter((id): id is string => Boolean(id)),
-  );
-  return eligible.filter((event) => !supersededIds.has(event.id));
 }
 
 function rankFacts(
@@ -672,15 +519,6 @@ function nodeContains(
   );
 }
 
-function nodeIsNotAfterTarget(
-  outlineNodeId: string | null,
-  scope: OutlineScope,
-): boolean {
-  if (scope.targetNodeOrder === null || !outlineNodeId) return true;
-  const order = scope.nodeOrder.get(outlineNodeId);
-  return order === undefined || order <= scope.targetNodeOrder;
-}
-
 function chapterOrderForNode(
   outlineNodeId: string | null,
   scope: OutlineScope,
@@ -688,10 +526,6 @@ function chapterOrderForNode(
   if (!outlineNodeId) return null;
   const chapterId = scope.chapterByNode.get(outlineNodeId);
   return chapterId ? (scope.chapterOrder.get(chapterId) ?? null) : null;
-}
-
-function nodeOrder(outlineNodeId: string | null, scope: OutlineScope): number {
-  return outlineNodeId ? (scope.nodeOrder.get(outlineNodeId) ?? -1) : -1;
 }
 
 function relationshipLine(
@@ -712,24 +546,21 @@ function timelineLine(
 }
 
 function knowledgeLine(
-  record: KnowledgeRecord,
-  facts: readonly CanonFact[],
-  timeline: readonly TimelineEvent[],
+  { record, fact, event }: StoryKnowledge,
   entities: ReadonlyMap<string, CanonEntity>,
 ): string {
-  const fact = record.factId
-    ? facts.find((candidate) => candidate.id === record.factId)
-    : null;
+  const knower =
+    record.knowerType === "reader"
+      ? "读者"
+      : entityName(record.knowerEntityId!, entities);
+  const prefix = `- [knowledge:${record.id}] [${record.belief}] ${knower} [node:${record.learnedAtNodeId}]`;
   if (fact) {
     const object = fact.objectEntityId
       ? entityName(fact.objectEntityId, entities)
       : JSON.stringify(fact.value);
-    return `- [${record.belief}] ${entityName(fact.subjectId, entities)} ${fact.predicate} ${object}`;
+    return `${prefix} [fact:${fact.id}]：${entityName(fact.subjectId, entities)} ${fact.predicate} ${object}`;
   }
-  const event = record.timelineEventId
-    ? timeline.find((candidate) => candidate.id === record.timelineEventId)
-    : null;
-  return event ? `- [${record.belief}] 事件：${event.title}` : "";
+  return event ? `${prefix} [timeline:${event.id}] 事件：${event.title}` : "";
 }
 
 function foreshadowLine(item: Foreshadow): string {
@@ -741,10 +572,6 @@ function entityName(
   entities: ReadonlyMap<string, CanonEntity>,
 ): string {
   return entities.get(id)?.name ?? `[entity:${id}]`;
-}
-
-function uniqueById<T extends { id: string }>(items: readonly T[]): T[] {
-  return [...new Map(items.map((item) => [item.id, item])).values()];
 }
 
 function bounded(value: number | undefined, fallback: number): number {

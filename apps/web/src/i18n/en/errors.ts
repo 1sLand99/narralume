@@ -47,6 +47,8 @@ export const errors: typeof errorsZh = {
     routeNotFound: "The API endpoint does not exist.",
   },
   message: {
+    storyStateChapterUnavailable: "The selected chapter is missing or abandoned. Select another chapter.",
+    storyStateCharacterUnavailable: "The selected character is unavailable in this project. Select another character.",
     trialAutopilotChapterLimit:
       "The built-in trial model writes at most 3 chapters per run; add your own model channel in Settings and set it as the default to continue.",
     downloadUnsupported: "The current driver does not support library export",

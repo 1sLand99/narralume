@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { buildApp } from "../apps/server/src/app.js";
 import type { ServerConfig } from "../apps/server/src/config.js";
 import type { NarrativeModelClient } from "@narralume/narrative";
+import { NodeNarrativeDatabase } from "@narralume/persistence/node";
+import { seedStoryState } from "./fixtures/story-state.js";
 
 const workspace = mkdtempSync(join(tmpdir(), "narrative-e2e-"));
 const dataDirectory = join(workspace, "data");
@@ -18,8 +20,10 @@ const config: ServerConfig = {
   port,
   environment: "test",
 };
+const database = new NodeNarrativeDatabase(config.databasePath);
 const app = await buildApp({
   config,
+  database,
   environment: {
     NARRATIVE_LLM_API_KEY: "e2e-placeholder-key",
     NARRATIVE_LLM_BASE_URL: "https://e2e.example.com/v1",
@@ -31,6 +35,7 @@ const app = await buildApp({
   enableRunWorker: false,
   logger: false,
 });
+seedStoryState(database);
 await app.listen({ host: config.host, port: config.port });
 
 let closing = false;
@@ -38,6 +43,7 @@ async function close() {
   if (closing) return;
   closing = true;
   await app.close();
+  database.close();
   rmSync(workspace, { recursive: true, force: true });
 }
 

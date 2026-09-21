@@ -59,6 +59,7 @@ import {
   type NarrativeDatabase,
 } from "@narralume/persistence";
 import { z } from "zod";
+import { registerStoryStateRoutes } from "./story-state-routes.js";
 import {
   applyOutlineChange,
   previewOutlineChange,
@@ -139,6 +140,7 @@ export function registerStoryRoutes(
     environment: Readonly<Record<string, string | undefined>>;
   },
 ): void {
+  registerStoryStateRoutes(app, database);
   const projects = new SqliteProjectRepository(database);
   const requestReplays = new SqliteRequestReplayRepository(database);
   const covers = new SqliteProjectCoverRepository(database);
