@@ -164,7 +164,11 @@ export function registerReviewRoutes(
           "Project not found",
           404,
         );
-      return { changeSets: reviews.listCanonChangeSets(projectId) };
+      return {
+        changeSets: reviews
+          .listCanonChangeSets(projectId)
+          .filter((set) => set.changes.kind !== "story_line_progress"),
+      };
     },
   );
 
@@ -210,6 +214,13 @@ export function registerReviewRoutes(
           }
 
           const current = reviews.getCanonChangeSet(projectId, changeSetId);
+          if (current?.changes.kind === "story_line_progress") {
+            throw new ReviewRouteError(
+              "story_line_proposal.individual_required",
+              "Story line proposals require individual decisions",
+              409,
+            );
+          }
           if (current && current.status !== "candidate") {
             const sameDecision =
               (current.status === "applied" && decision.action === "apply") ||

@@ -1,5 +1,8 @@
 import type { JsonSchemaContract, StructuredValidator } from "@narralume/llm";
-import { StoryLongLineSchema } from "@narralume/contracts";
+import {
+  StoryLongLineSchema,
+  StoryLineProgressProposalSchema,
+} from "@narralume/contracts";
 import { z } from "zod";
 
 const IntentProposalSchema = z.object({
@@ -167,6 +170,7 @@ export const PlanningReviewResultSchema = z.object({
   }),
   recommendations: z.array(z.string().min(1)).max(20),
   compassAdjustments: z.array(z.string()).max(12),
+  lineProposals: z.array(StoryLineProgressProposalSchema).max(12),
 });
 export type PlanningReviewResult = z.infer<typeof PlanningReviewResultSchema>;
 
@@ -436,7 +440,13 @@ export const PLANNING_REVIEW_CONTRACT: JsonSchemaContract = {
   schema: {
     type: "object",
     additionalProperties: false,
-    required: ["summary", "scores", "recommendations", "compassAdjustments"],
+    required: [
+      "summary",
+      "scores",
+      "recommendations",
+      "compassAdjustments",
+      "lineProposals",
+    ],
     properties: {
       summary: { type: "string" },
       scores: {
@@ -457,6 +467,11 @@ export const PLANNING_REVIEW_CONTRACT: JsonSchemaContract = {
       },
       recommendations: { type: "array", items: { type: "string" } },
       compassAdjustments: { type: "array", items: { type: "string" } },
+      lineProposals: {
+        type: "array",
+        maxItems: 12,
+        items: z.toJSONSchema(StoryLineProgressProposalSchema),
+      },
     },
   },
 };

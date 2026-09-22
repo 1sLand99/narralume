@@ -2752,6 +2752,7 @@ function scriptedValue(purpose: string, request?: unknown): unknown {
       },
       recommendations: ["下一弧提高主动选择代价"],
       compassAdjustments: [],
+      lineProposals: [],
     };
   }
   throw new Error(`unexpected purpose ${purpose}`);

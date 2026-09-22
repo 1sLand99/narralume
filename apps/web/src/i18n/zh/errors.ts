@@ -33,6 +33,10 @@ export const errors = {
   },
   /* 主文案：键为后端错误码的 camelCase 形式；ApiError 命中即用本地化文案。 */
   message: {
+    storyLineProposalIndividualRequired: "请到长期故事线逐项核对并裁定此建议。",
+    storyLineProposalNotFound: "此故事线建议已不可用，请刷新。",
+    storyLineProposalDecisionConflict: "此建议已有不同的裁定，请刷新查看。",
+    storyLineProposalStale: "故事线或正文证据已变化，请核对新的阶段复盘建议。",
     importBundleReferenceMissing: "备份缺少认知或事实依赖的数据，已取消恢复，未创建不完整副本。",
     knowledgeVersionConflict: "认知记录或其引用资料已发生变化，请重新载入后核对再保存。",
     knowledgeIdempotencyConflict: "此次提交标识已用于其他修改，请重新载入后再试。",

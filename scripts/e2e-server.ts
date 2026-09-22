@@ -7,6 +7,7 @@ import type { ServerConfig } from "../apps/server/src/config.js";
 import type { NarrativeModelClient } from "@narralume/narrative";
 import { NodeNarrativeDatabase } from "@narralume/persistence/node";
 import { seedStoryState } from "./fixtures/story-state.js";
+import { seedStoryLineProposals } from "./fixtures/story-line-proposals.js";
 
 const workspace = mkdtempSync(join(tmpdir(), "narrative-e2e-"));
 const dataDirectory = join(workspace, "data");
@@ -36,6 +37,13 @@ const app = await buildApp({
   logger: false,
 });
 seedStoryState(database);
+for (const viewport of [
+  "desktop-1440",
+  "desktop-1024",
+  "tablet-768",
+  "mobile-375",
+])
+  await seedStoryLineProposals(database, viewport);
 await app.listen({ host: config.host, port: config.port });
 
 let closing = false;

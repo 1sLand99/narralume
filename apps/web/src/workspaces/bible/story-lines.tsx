@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { StoryLineProposals } from "./story-line-proposals";
 import { Link } from "react-router";
 
 import { ConfirmDialog } from "../../components/confirm-dialog";
@@ -289,6 +290,7 @@ export function StoryLines({ bible }: { bible: StoryBible }) {
       >
         {t("bible.lines.editCompass")}
       </Link>
+      <StoryLineProposals bible={bible} />
       <aside
         className="story-lines__reviews"
         aria-label={t("bible.lines.reviews")}

@@ -26,3 +26,4 @@ export * from "./canon-candidate-context.js";
 export * from "./canon-candidate-workers.js";
 export * from "./canon-candidate-service.js";
 export * from "./workers.js";
+export * from "./story-line-proposals.js";

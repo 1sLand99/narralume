@@ -3741,3 +3741,11 @@ async function sha256(bytes: Uint8Array) {
     .map((value) => value.toString(16).padStart(2, "0"))
     .join("");
 }
+import type { StoryLineProposalSetDto } from "@narralume/contracts";
+
+export function getStoryLineProposals(projectId: string, signal?: AbortSignal): Promise<StoryLineProposalSetDto[]> {
+  return requestJson(`/api/projects/${encodeURIComponent(projectId)}/compass/proposals`, signal ? { signal } : {});
+}
+export function decideStoryLineProposal(projectId: string, setId: string, itemId: string, action: "apply" | "reject"): Promise<StoryLineProposalSetDto> {
+  return requestJson(`/api/projects/${encodeURIComponent(projectId)}/compass/proposals/${encodeURIComponent(setId)}/items/${encodeURIComponent(itemId)}/decision`, jsonRequest("POST", { action }));
+}

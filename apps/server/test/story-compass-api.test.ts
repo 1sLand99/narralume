@@ -1,11 +1,27 @@
 import { randomUUID } from "node:crypto";
 import type { StoryCompassDto, StoryLongLineDto } from "@narralume/contracts";
-import { createOutlineNode, type OutlineNode } from "@narralume/domain";
+import {
+  createOutlineNode,
+  createDocument,
+  ZERO_BUDGET_USAGE,
+  type OutlineNode,
+} from "@narralume/domain";
+import {
+  buildClosingReviewRecipe,
+  buildRollingOutlineRecipe,
+} from "@narralume/harness";
+import {
+  AutomationWorkerSuite,
+  type NarrativeModelClient,
+} from "@narralume/narrative";
 import {
   SqliteAutomationRepository,
   SqliteCanonRepository,
   SqliteNarrativeStateRepository,
   SqliteStoryRepository,
+  SqliteDocumentRepository,
+  SqliteRunRepository,
+  SqliteReviewRepository,
 } from "@narralume/persistence";
 import { NodeNarrativeDatabase } from "@narralume/persistence/node";
 import { afterEach, describe, expect, it } from "vitest";
@@ -143,6 +159,344 @@ async function setup() {
     get,
   };
 }
+
+async function proposalSetup() {
+  const t = await setup();
+  await t.put({
+    ...t.input,
+    longLines: [t.line, { ...t.line, title: "潮声" }],
+    expectedVersion: null,
+  });
+  const now = "2026-09-22T00:00:00.000Z";
+  const documents = new SqliteDocumentRepository(t.database);
+  const document = documents.insert(
+    createDocument({
+      id: randomUUID(),
+      projectId: t.projectId,
+      kind: "chapter",
+      title: t.chapter.title,
+      outlineNodeId: t.chapter.id,
+      now,
+    }),
+  );
+  const version = documents.appendVersion(t.projectId, document.id, {
+    id: randomUUID(),
+    content: "见证者交出了旧信。潮声再次响起。",
+    source: "test",
+    now,
+  });
+  const state = new SqliteNarrativeStateRepository(
+    t.database,
+    new SqliteCanonRepository(t.database),
+    t.story,
+  );
+  state.upsertSummary({
+    id: randomUUID(),
+    projectId: t.projectId,
+    scopeType: "chapter",
+    scopeId: t.chapter.id,
+    summary: "见证者交出旧信，但潮声之谜仍未解开。",
+    stateDelta: {},
+    sourceHash: version.contentHash,
+    createdAt: now,
+  });
+  const automation = new SqliteAutomationRepository(t.database);
+  const session = automation.createSession({
+    id: randomUUID(),
+    projectId: t.projectId,
+    mode: "autopilot",
+    targetChapters: 2,
+    windowSize: 2,
+    maxRevisionCycles: 0,
+    chapterPolicy: {},
+    now,
+  });
+  const runId = randomUUID();
+  const recipe = buildClosingReviewRecipe(runId, ["arc"]);
+  const runs = new SqliteRunRepository(t.database);
+  runs.create({
+    id: runId,
+    projectId: t.projectId,
+    mode: "autopilot",
+    recipe: recipe.name,
+    recipeVersion: recipe.version,
+    targetOutlineNodeId: t.arc.id,
+    policy: { sessionId: session.id, arcId: t.arc.id },
+    steps: recipe.steps,
+    now,
+  });
+  runs.leaseNext("test", now, 30_000);
+  const step = runs.startStep(runId, recipe.steps[0]!.id, now);
+  const proposals = [0, 1].map((lineIndex) => ({
+    lineIndex,
+    rationale: "正文摘要记载旧信已交出",
+    status: "developing",
+    progress: "已取得旧信",
+    openPromises: ["潮声之谜"],
+    nextDevelopment: "寻找收信人",
+    evidenceChapterIds: [t.chapter.id],
+  }));
+  let prompt = "";
+  const review = async (items: unknown = proposals, during?: () => void) => {
+    const model: NarrativeModelClient = {
+      async text() {
+        throw new Error("Unexpected text generation");
+      },
+      async structured(_run, _step, _purpose, request, _contract, validate) {
+        prompt = JSON.stringify(request);
+        const checked = validate({
+          summary: "调查取得证据",
+          scores: {
+            promise: 80,
+            causality: 80,
+            characterArc: 80,
+            pacing: 80,
+            continuity: 80,
+          },
+          recommendations: [],
+          compassAdjustments: [],
+          lineProposals: items,
+        });
+        if (!checked.success) throw new Error(checked.issues.join("; "));
+        during?.();
+        return {
+          value: checked.data,
+          usage: ZERO_BUDGET_USAGE,
+          mode: "native",
+          attempts: 1,
+        };
+      },
+    };
+    const worker = new AutomationWorkerSuite(t.database, model).registry()[
+      "arc.review"
+    ]!;
+    return worker.execute(
+      runs.getSnapshot(runId),
+      step,
+      new AbortController().signal,
+    );
+  };
+  const url = `/api/projects/${t.projectId}/compass/proposals`;
+  const decide = (
+    itemId: string,
+    action: "apply" | "reject",
+    projectId = t.projectId,
+  ) =>
+    t.app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/compass/proposals/${encodeURIComponent(step.id + ":story-lines")}/items/${itemId}/decision`,
+      payload: { action },
+    });
+  return {
+    ...t,
+    documents,
+    document,
+    state,
+    automation,
+    proposals,
+    review,
+    decide,
+    url,
+    runs,
+    session,
+    prompt: () => prompt,
+    setId: step.id + ":story-lines",
+  };
+}
+
+describe("evidence-backed story line proposals", () => {
+  it("keeps evidence valid when unrelated future plans are appended and blocks bulk decisions", async () => {
+    const t = await proposalSetup();
+    await t.review();
+    t.story.insertOutlineNode(
+      createOutlineNode({
+        id: randomUUID(),
+        projectId: t.projectId,
+        parent: t.arc,
+        kind: "chapter",
+        ordinal: 2,
+        title: "尚未写作的新章",
+        now: new Date().toISOString(),
+      }),
+    );
+    const bulk = await t.app.inject({
+      method: "POST",
+      url: `/api/projects/${t.projectId}/canon-change-sets/${encodeURIComponent(t.setId)}/decisions`,
+      payload: { requestId: randomUUID(), action: "apply" },
+    });
+    expect(bulk.statusCode, bulk.body).toBe(409);
+    expect(bulk.json().error.code).toBe(
+      "story_line_proposal.individual_required",
+    );
+    expect((await t.decide("0", "apply")).statusCode).toBe(200);
+  });
+  it("feeds actual accepted results and rejections into the next planning window", async () => {
+    const t = await proposalSetup();
+    await t.review();
+    await t.decide("0", "apply");
+    await t.decide("1", "reject");
+    const id = randomUUID();
+    const recipe = buildRollingOutlineRecipe(id);
+    t.runs.create({
+      id,
+      projectId: t.projectId,
+      recipe: recipe.name,
+      recipeVersion: recipe.version,
+      mode: "autopilot",
+      targetOutlineNodeId: t.story.listOutline(t.projectId)[0]!.id,
+      policy: { sessionId: t.session.id },
+      steps: recipe.steps,
+      now: new Date().toISOString(),
+    });
+    let captured = "";
+    const model: NarrativeModelClient = {
+      async text() {
+        throw new Error("unexpected");
+      },
+      async structured(_run, _step, _purpose, request) {
+        captured = JSON.stringify(request);
+        throw new Error("captured planning input");
+      },
+    };
+    const snapshot = t.runs.getSnapshot(id);
+    const worker = new AutomationWorkerSuite(t.database, model).registry()[
+      "outline.generate"
+    ]!;
+    await expect(
+      worker.execute(
+        snapshot,
+        snapshot.steps[0]!,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("captured planning input");
+    expect(captured).toContain("compassVersion");
+    expect(captured).toContain("已取得旧信");
+    expect(captured).toContain('\\"action\\":\\"reject\\"');
+    expect(captured).toContain("不得当成作者方向");
+  });
+  it("stages without applying, applies siblings atomically, replays decisions and rejects opposite decisions", async () => {
+    const t = await proposalSetup();
+    const before = await t.get();
+    await t.review();
+    expect(await t.get()).toEqual(before);
+    expect(t.prompt()).toContain(t.chapter.id);
+    expect(t.prompt()).not.toContain(t.future.title);
+    const list = (await t.app.inject({ method: "GET", url: t.url })).json();
+    expect(list[0].items).toHaveLength(2);
+    expect(list[0].stale).toBe(false);
+    expect((await t.decide("0", "apply")).statusCode).toBe(200);
+    expect((await t.decide("0", "apply")).statusCode).toBe(200);
+    expect((await t.get()).version).toBe(before.version + 1);
+    expect((await t.decide("0", "reject")).statusCode).toBe(409);
+    expect((await t.decide("1", "apply")).statusCode).toBe(200);
+    expect((await t.get()).version).toBe(before.version + 2);
+    expect(
+      (await t.get()).longLines.every(
+        (line) => line.development?.progress === "已取得旧信",
+      ),
+    ).toBe(true);
+    expect(
+      new SqliteReviewRepository(t.database).listCanonItemDecisions(t.setId)[0]!
+        .result,
+    ).toMatchObject({ compassVersion: before.version + 1 });
+    expect((await t.decide("0", "apply", t.foreignId)).statusCode).toBe(404);
+  });
+  it.each(["compass", "manuscript", "summary", "outline"])(
+    "rejects stale %s evidence but allows refusal",
+    async (change) => {
+      const t = await proposalSetup();
+      await t.review();
+      if (change === "compass")
+        t.automation.upsertCompass({
+          ...(await t.get()),
+          longLines: [...(await t.get()).longLines].reverse(),
+        });
+      if (change === "manuscript")
+        t.documents.appendVersion(t.projectId, t.document.id, {
+          id: randomUUID(),
+          content: "旧信被烧毁",
+          source: "test",
+          now: new Date().toISOString(),
+        });
+      if (change === "summary") {
+        const old = t.state.latestSummary(
+          t.projectId,
+          "chapter",
+          t.chapter.id,
+        )!;
+        t.state.upsertSummary({ ...old, summary: "重新整理的摘要" });
+      }
+      if (change === "outline")
+        t.story.updateOutlineStatus(
+          t.projectId,
+          t.arc.id,
+          "abandoned",
+          new Date().toISOString(),
+        );
+      const response = await t.decide("0", "apply");
+      expect(response.statusCode, response.body).toBe(409);
+      expect(response.json().error.code).toBe("story_line_proposal.stale");
+      expect((await t.decide("0", "reject")).statusCode).toBe(200);
+    },
+  );
+  it("rejects fabricated, future, duplicate, and cross-project evidence and unknown lines", async () => {
+    const t = await proposalSetup();
+    for (const evidenceChapterIds of [
+      [t.future.id],
+      [t.foreignChapter.id],
+      [t.chapter.id, t.chapter.id],
+      ["made-up"],
+    ]) {
+      await expect(
+        t.review([{ ...t.proposals[0], evidenceChapterIds }]),
+      ).rejects.toThrow("Evidence");
+    }
+    await expect(
+      t.review([{ ...t.proposals[0], lineIndex: 3 }]),
+    ).rejects.toThrow("lineIndex");
+    await expect(t.review([t.proposals[0], t.proposals[0]])).rejects.toThrow(
+      "lineIndex",
+    );
+  });
+  it("does not use outline summaries when manuscript summaries are absent or outdated", async () => {
+    const t = await proposalSetup();
+    t.documents.appendVersion(t.projectId, t.document.id, {
+      id: randomUUID(),
+      content: "新的正文",
+      source: "test",
+      now: new Date().toISOString(),
+    });
+    await expect(t.review()).rejects.toThrow("Evidence");
+    await t.review([]);
+    expect((await t.app.inject({ method: "GET", url: t.url })).json()).toEqual(
+      [],
+    );
+  });
+  it("rechecks the baseline after model completion", async () => {
+    const t = await proposalSetup();
+    await expect(
+      t.review(t.proposals, () =>
+        t.automation.upsertCompass({
+          ...t.automation.requireCompass(t.projectId),
+          corePromise: "变更",
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "story_line_proposal.stale" });
+    expect((await t.app.inject({ method: "GET", url: t.url })).json()).toEqual(
+      [],
+    );
+  });
+  it("rolls back the compass if persisting its decision fails", async () => {
+    const t = await proposalSetup();
+    await t.review();
+    const before = await t.get();
+    t.database.raw.exec(
+      "CREATE TRIGGER fail_proposal BEFORE INSERT ON canon_change_set_item_decisions BEGIN SELECT RAISE(ABORT, 'test fault'); END",
+    );
+    expect((await t.decide("0", "apply")).statusCode).toBe(500);
+    expect(await t.get()).toEqual(before);
+  });
+});
 
 describe("author-maintained long story lines", () => {
   it("persists stage records, rejects stale saves, and allows simple directions without a progress record", async () => {

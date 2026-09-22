@@ -2,6 +2,8 @@
 
 # Data, Privacy, and Backup
 
+Story line proposals and individual decisions are stored in the current library and preserved by full SQLite backups. Project bundles and content snapshots preserve the compass after accepted changes, but exclude proposal and decision history. Download the full library to retain the complete process.
+
 NarraLume does not provide cloud sync. Where your work actually lives depends on whether you use the hosted demo, a local Server, or Docker; signing into the same browser account does not make this data interoperate automatically.
 
 Start by telling the three file types and recovery paths apart:

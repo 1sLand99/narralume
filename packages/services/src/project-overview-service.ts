@@ -132,7 +132,11 @@ export class ProjectOverviewService {
       revisionProposals[0]?.documentId ?? reviewIssues[0]?.documentId ?? null;
     const canonChangeSets = this.reviews
       .listCanonChangeSets(projectId)
-      .filter((changeSet) => changeSet.status === "candidate");
+      .filter(
+        (changeSet) =>
+          changeSet.status === "candidate" &&
+          changeSet.changes.kind !== "story_line_progress",
+      );
 
     return {
       project,

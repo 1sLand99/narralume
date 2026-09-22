@@ -1,4 +1,5 @@
 import {
+  StoryLineProposalService,
   requireCurrentChapterOutline,
   requirePlanningEntitiesReady,
 } from "@narralume/narrative";
@@ -357,6 +358,37 @@ export function registerAutomationRoutes(
       );
     });
   });
+
+  app.route(
+    "GET",
+    "/api/projects/:projectId/compass/proposals",
+    async (request) => {
+      const { projectId } = ProjectParamsSchema.parse(request.params);
+      requireProject(projects, projectId);
+      return new StoryLineProposalService(database).list(projectId);
+    },
+  );
+  app.route(
+    "POST",
+    "/api/projects/:projectId/compass/proposals/:setId/items/:itemId/decision",
+    async (request) => {
+      const { projectId, setId, itemId } = ProjectParamsSchema.extend({
+        setId: z.string().min(1),
+        itemId: z.string().min(1),
+      }).parse(request.params);
+      requireProject(projects, projectId);
+      const { action } = z
+        .object({ action: z.enum(["apply", "reject"]) })
+        .strict()
+        .parse(request.body);
+      return new StoryLineProposalService(database).decide(
+        projectId,
+        setId,
+        itemId,
+        action,
+      );
+    },
+  );
 
   app.route(
     "GET",

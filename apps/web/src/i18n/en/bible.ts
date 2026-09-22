@@ -3,6 +3,11 @@ import { storyState } from "./story-state";
 import { knowledge } from "./knowledge";
 
 export const bible: typeof bibleZh = {
+  lineProposals: {
+    title: "Story line progress proposals", hint: "Stage reviews propose changes from committed manuscript summaries. Only accepted items update story lines; next developments remain plans.",
+    empty: "No progress proposals yet. Review them here after a continuous-writing stage review.", stale: "Story lines or evidence changed. Pending proposals cannot be applied. Reject them or wait for a new stage review.",
+    before: "Previous record", after: "Proposed record", evidence: "Evidence summaries at review time", apply: "Accept progress proposal", reject: "Reject proposal", applied: "Accepted and story line updated", rejected: "Rejected; story line unchanged",
+  },
   state: storyState,
   knowledge,
   lines: {

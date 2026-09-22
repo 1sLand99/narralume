@@ -98,6 +98,12 @@ Build the hierarchy of volumes, chapters, and scenes, with titles, summaries, an
 
 The outline is the writing plan, not the prose. Editing the outline does not automatically rewrite chapters that are already saved.
 
+### Story lines and progress proposals
+
+Use "Story → Outline → Story lines" to maintain stage goals, progress, open promises, and future direction. Continuous-writing stage reviews produce progress proposals supported by manuscript summaries, with before/after values, the evidence summaries used at review time, and links back to chapters.
+
+Only individual acceptance updates a story line; rejection preserves the decision without changing the record. Outdated proposals cannot overwrite changed records, and retries do not apply a change twice. The next planning window considers author decisions; future direction remains a plan. Missing or outdated manuscript summaries are never replaced by outline summaries as evidence.
+
 ### Inspect and maintain knowledge by chapter
 
 Under "Story → Outline → Chapter state", select a chapter and perspective to inspect registrations through the end of that chapter, including its scenes. A changed fact does not imply a character has learned it. Beliefs, suspicions and false beliefs appear separately; no registration does not imply ignorance.

@@ -2,6 +2,11 @@
 import { storyState } from "./story-state";
 import { knowledge } from "./knowledge";
 export const bible = {
+  lineProposals: {
+    title: "故事线进展建议", hint: "阶段复盘根据已定稿正文摘要提出建议。逐项核对后采纳，才会更新故事线；下一步变化仍是计划。",
+    empty: "暂无进展建议；完成连续创作的阶段复盘后可在此核对。", stale: "故事线或证据已变化，此批未决建议不能采纳。可拒绝或等待新的阶段复盘。",
+    before: "建议前的记录", after: "建议改为", evidence: "复盘时的证据摘要", apply: "采纳进展建议", reject: "拒绝此建议", applied: "已采纳并更新故事线", rejected: "已拒绝，故事线未修改",
+  },
   state: storyState,
   knowledge,
   lines: {

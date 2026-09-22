@@ -47,6 +47,10 @@ export const errors: typeof errorsZh = {
     routeNotFound: "The API endpoint does not exist.",
   },
   message: {
+    storyLineProposalIndividualRequired: "Review and decide each proposal in Story lines.",
+    storyLineProposalNotFound: "This story line proposal is unavailable. Refresh to check.",
+    storyLineProposalDecisionConflict: "This proposal already has a different decision. Refresh to view it.",
+    storyLineProposalStale: "Story lines or manuscript evidence changed. Review a new stage proposal.",
     importBundleReferenceMissing: "The bundle is missing data referenced by knowledge or facts. Restore was cancelled without creating an incomplete copy.",
     knowledgeVersionConflict: "Knowledge or its references changed. Reload and review before saving.",
     knowledgeIdempotencyConflict: "This submission ID was used for different changes. Reload and try again.",

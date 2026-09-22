@@ -1,4 +1,13 @@
 import { sha256Hex } from "@narralume/domain";
+import {
+  StoryCompassSchema,
+  StoryLineProposalChangesSchema,
+} from "@narralume/contracts";
+import {
+  StoryLineProposalService,
+  storyLineReviewEvidence,
+  storyLineProposalIssues,
+} from "./story-line-proposals.js";
 import { ContextCompiler, type ContextSource } from "@narralume/context";
 
 import {
@@ -23,6 +32,7 @@ import {
   SqliteContextReceiptRepository,
   SqliteNarrativeStateRepository,
   SqliteProjectRepository,
+  SqliteReviewRepository,
   SqliteStoryRepository,
   SqliteTemplateRepository,
   type NarrativeDatabase,
@@ -384,6 +394,28 @@ export class AutomationWorkerSuite {
         }),
       },
       ...continuationState.sources,
+      ...new StoryLineProposalService(this.database)
+        .list(project.id)
+        .slice(0, 12)
+        .map((set, index): ContextSource => ({
+          id: `story-line-decisions:${set.id}`,
+          kind: "author-intent",
+          label: "故事线建议与作者逐项裁定",
+          content: JSON.stringify({
+            scopeNodeId: set.scopeNodeId,
+            stale: set.stale,
+            items: set.items.map((item) => ({
+              title: item.before.title,
+              proposal: item.after,
+              decision: item.decision ?? "pending",
+            })),
+          }),
+          authority: "reference",
+          priority: Math.max(50, 97 - index),
+          compressible: false,
+          sourceType: "canon_change_set",
+          sourceId: set.id,
+        })),
       ...[
         ...this.state.listLatestSummaries(project.id, "arc"),
         ...this.state.listLatestSummaries(project.id, "volume"),
@@ -443,6 +475,7 @@ export class AutomationWorkerSuite {
           "zh-CN": [
             "你是长篇小说滚动规划师。只详细规划当前可见窗口，不要一次冻结整部长篇。",
             "计划必须承接已提交章节，兑现指南针，尊重作者锁定意图与 steer。",
+            "故事线候选中的 pending 尚未采纳，reject 已被作者拒绝，均不得当成作者方向。apply 的 result 是当时实际写入记录，当前指南针优先；不要重复被拒绝的变化。",
             "指南针 longLines 的 development 是作者维护的阶段记录：scopeNodeId 指定当前卷或弧，stageGoal 是阶段目标，progress 是作者对进展的记录，openPromises 是尚未兑现的承诺，nextDevelopment 是后续方向。结合当前阶段选择本窗口推进的线，不要求每条线每章出场，也不为完成窗口而全部解决。evidenceChapterIds 指向已定稿章节；核对摘要和事实，不把计划目标或缺少证据的进展记录变成已经发生的事实。",
             "每章要有目标、阻力、转折、结果与结尾钩子；结果必须推动因果链。",
             "先判断既有角色、关系变化与场景能否承担剧情功能；新人物、地点或组织只在本窗口确有需要时提出，entityProposals 可以为空，不设新增数量指标，也不要因为初始名单有限就强迫每段剧情围绕同几个人。每项提案说明 narrativeRole 和 rationale，尊重拒绝记录，不换名重复被拒绝的功能。",
@@ -454,6 +487,7 @@ export class AutomationWorkerSuite {
           en: [
             "You are the rolling planner of a long-form novel. Plan only the currently visible window in detail; never freeze an entire long novel at once.",
             "The plan must continue from committed chapters, honor the compass, and respect the author's locked intent and steers.",
+            "For story line proposals, pending is unaccepted and reject is an author rejection; neither is author direction. An apply result records the actual write at that time; the current compass takes precedence. Do not repeat rejected changes.",
             "Each longLines.development entry is an author-maintained stage record: scopeNodeId identifies its volume or arc, stageGoal is the current objective, progress is the author's progress note, openPromises lists outstanding promises, and nextDevelopment gives future direction. Select lines relevant to this window; not every line must appear in every chapter or resolve by the window's end. evidenceChapterIds reference committed chapters. Check summaries and facts; planned goals and unsupported progress notes are not established events.",
             "Each chapter needs a goal, resistance, a turn, an outcome, and a closing hook; outcomes must advance the causal chain.",
             "First consider whether existing characters, changing relationships, and settings can serve the story. Propose a new character, location, or organization only when this window needs one. entityProposals may be empty: there is no quota, and the initial cast need not carry every future conflict. Explain each narrativeRole and rationale, honor rejected proposals, and do not rename a rejected idea to repeat it.",
@@ -837,25 +871,13 @@ export class AutomationWorkerSuite {
         `Planning review target kind ${node.kind} is not ${scopeType}`,
       );
     }
-    const outline = this.story.listOutline(snapshot.run.projectId);
-    const chapters = outline.filter(
-      (candidate) =>
-        candidate.kind === "chapter" &&
-        candidate.status === "committed" &&
-        (candidate.parentId === node.id ||
-          (scopeType === "volume" &&
-            outline.some(
-              (parent) =>
-                parent.id === candidate.parentId && parent.parentId === node.id,
-            ))),
+    const baselineCompass = this.automation.getCompass(snapshot.run.projectId);
+    const evidenceBaseline = storyLineReviewEvidence(
+      this.database,
+      snapshot.run.projectId,
+      node.id,
     );
-    const evidence = chapters.map((chapter) => ({
-      title: chapter.title,
-      status: chapter.status,
-      summary:
-        this.state.latestSummary(snapshot.run.projectId, "chapter", chapter.id)
-          ?.summary ?? chapter.summary,
-    }));
+    const evidence = evidenceBaseline.evidence;
     const source = JSON.stringify(evidence);
     const contextWindow =
       this.model.effectiveContextWindow?.(
@@ -891,18 +913,19 @@ export class AutomationWorkerSuite {
           sourceId: node.id,
           content: JSON.stringify({
             scope: node.title,
-            compass: this.automation.getCompass(snapshot.run.projectId),
+            compass: baselineCompass,
           }),
         },
         ...evidence.map((chapter, index): ContextSource => ({
-          id: `review-chapter:${chapters[index]!.id}`,
+          id: `review-chapter:${chapter.chapterId}`,
           kind: "summary",
           label: chapter.title,
           content: JSON.stringify(chapter),
           authority: "confirmed",
+          compressible: false,
           priority: 60 + 30 * ((index + 1) / evidence.length),
           sourceType: "outline_node",
-          sourceId: chapters[index]!.id,
+          sourceId: chapter.chapterId,
         })),
       ],
     });
@@ -923,12 +946,14 @@ export class AutomationWorkerSuite {
               "基于章节摘要评估承诺兑现、因果、人物弧、节奏和连续性。建议服务于下一滚动窗口，不改写已提交事实。",
               "这是当前已写部分的阶段复盘，不意味着故事弧、卷或全书已经结束。区分已兑现、仍在发展和需要后续处理的承诺；不要仅因本次运行结束而要求结局或回收所有伏笔。仅依据所给摘要判断，明确证据不足之处。",
               "对照长期故事线的阶段目标、作者进展记录与未兑现承诺，指出有摘要支持的变化和下一阶段建议。作者记录本身不是正文证据，计划中的 nextDevelopment 尚未发生；调整仅作为 compassAdjustments 建议，不自动修改故事线。",
+              "lineProposals 是供作者逐项接受或拒绝的建议。lineIndex 是 compass.longLines 的零基索引，每条线最多一项；仅引用本次实际提供的 chapterId 作为 evidenceChapterIds。progress 概括有摘要支持的进展，openPromises 保留尚未兑现的承诺，nextDevelopment 仅为后续方向。不要仅因阶段结束建议 resolved；无有效证据则返回空数组。",
             ],
             en: [
               `You are the retrospective editor of a long-form novel ${scopeType === "arc" ? "story arc" : "volume"}.`,
               "Assess promise fulfillment, causality, character arcs, pacing, and continuity from chapter summaries. Suggestions serve the next rolling window and never rewrite committed facts.",
               "This reviews progress so far, not an assumed arc, volume, or book ending. Distinguish fulfilled promises, ongoing developments, and future work. Do not demand an ending or resolve every setup because this run is over. State evidence limitations when summaries are insufficient.",
               "Compare long-line stage goals, author progress notes, and open promises with the supplied summaries. Identify supported changes and possible next developments. Author notes are not manuscript evidence, and planned nextDevelopment has not happened. Return adjustments as compassAdjustments suggestions without updating story lines.",
+              "Return lineProposals for individual author decisions. lineIndex is the zero-based compass.longLines index; at most one proposal per line. evidenceChapterIds may only reference chapterId values actually supplied. progress records supported developments, openPromises retains outstanding promises, and nextDevelopment is future direction. Never suggest resolved merely because this stage ends. Return an empty array without valid evidence.",
             ],
           },
         ),
@@ -942,7 +967,17 @@ export class AutomationWorkerSuite {
         maxOutputTokens: outputReserve,
       },
       PLANNING_REVIEW_CONTRACT,
-      automationValidator(PlanningReviewResultSchema),
+      automationValidator(PlanningReviewResultSchema, (value) =>
+        storyLineProposalIssues(
+          value.lineProposals,
+          baselineCompass?.longLines.length ?? 0,
+          new Set(
+            compiled.sections
+              .filter((section) => section.id.startsWith("review-chapter:"))
+              .map((section) => section.sourceId!),
+          ),
+        ),
+      ),
       signal,
     );
     const now = this.now().toISOString();
@@ -954,6 +989,42 @@ export class AutomationWorkerSuite {
         snapshot.run.projectId,
         signal,
       );
+      if (result.value.lineProposals.length && baselineCompass) {
+        if (
+          this.automation.getCompass(snapshot.run.projectId)?.version !==
+            baselineCompass.version ||
+          storyLineReviewEvidence(
+            this.database,
+            snapshot.run.projectId,
+            node.id,
+          ).fingerprint !== evidenceBaseline.fingerprint
+        ) {
+          throw permanent(
+            "story_line_proposal.stale",
+            "The compass or evidence changed while reviewing",
+          );
+        }
+        new SqliteReviewRepository(this.database).insertCanonChangeSet({
+          id: `${step.id}:story-lines`,
+          projectId: snapshot.run.projectId,
+          runId: snapshot.run.id,
+          stepId: step.id,
+          changes: StoryLineProposalChangesSchema.parse({
+            kind: "story_line_progress",
+            scopeNodeId: node.id,
+            compass: StoryCompassSchema.parse(baselineCompass),
+            evidenceFingerprint: evidenceBaseline.fingerprint,
+            evidence: evidence.filter((chapter) =>
+              compiled.sections.some(
+                (section) => section.sourceId === chapter.chapterId,
+              ),
+            ),
+            items: result.value.lineProposals,
+          }),
+          status: "candidate",
+          createdAt: now,
+        });
+      }
       this.automation.insertPlanningReview({
         id: step.id,
         projectId: snapshot.run.projectId,
