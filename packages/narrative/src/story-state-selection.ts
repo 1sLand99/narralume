@@ -90,6 +90,16 @@ export function selectStoryState(
   };
   const factHistory = canon.listFactHistory(request.projectId);
   const factById = new Map(factHistory.map((fact) => [fact.id, fact]));
+  // Withdrawn intermediate revisions still connect older beliefs to a claim's
+  // lineage, even though those revisions cannot themselves enter the packet.
+  const lineageById = new Map(
+    canon
+      .listFactHistory(request.projectId, {
+        includeCandidates: true,
+        includeWithdrawn: true,
+      })
+      .map((fact) => [fact.id, fact]),
+  );
   const timeline = state
     .listTimeline(request.projectId)
     .filter((event) => nodeIsNotAfterTarget(event.outlineNodeId, scope));
@@ -126,7 +136,7 @@ export function selectStoryState(
     )
       continue;
     const subject = fact
-      ? `fact:${factLineage(fact, factById)}`
+      ? `fact:${factLineage(fact, lineageById)}`
       : `event:${event!.id}`;
     latestKnowledge.set(
       JSON.stringify([record.knowerType, record.knowerEntityId, subject]),
@@ -147,7 +157,7 @@ export function selectStoryState(
   const knowledge = [...latestKnowledge.values()];
   const explicitFactLineages = new Set(
     knowledge.flatMap((item) =>
-      item.fact ? [factLineage(item.fact, factById)] : [],
+      item.fact ? [factLineage(item.fact, lineageById)] : [],
     ),
   );
   const uncertainScopedFactIds = new Set(
@@ -189,7 +199,7 @@ export function selectStoryState(
       !uncertainScopedFactIds.has(fact.id) &&
       canAccessFact(fact, access) &&
       (request.audience === "author" ||
-        !explicitFactLineages.has(factLineage(fact, factById))),
+        !explicitFactLineages.has(factLineage(fact, lineageById))),
   );
   const eligibleRelationships = state
     .listRelationshipHistory(request.projectId)
@@ -228,7 +238,7 @@ export function selectStoryState(
   };
 }
 
-function factLineage(
+export function factLineage(
   fact: CanonFact,
   byId: ReadonlyMap<string, CanonFact>,
 ): string {
@@ -243,7 +253,7 @@ function factLineage(
   return cursor.id;
 }
 
-function buildOutlineScope(
+export function buildOutlineScope(
   outline: readonly OutlineNode[],
   targetId: string | null | undefined,
 ): OutlineScope {

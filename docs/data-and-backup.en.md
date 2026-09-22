@@ -65,6 +65,8 @@ Fit for handing one work to a collaborator, making an experimental copy inside t
 
 Project snapshots intentionally do not carry provider channels or keys. After a restore, configure and assign models again in the target environment's Settings if you need AI.
 
+The current project bundle format is version 6. It includes knowledge registrations, correction and withdrawal reasons, referenced historical facts, and withdrawn events. Restoration and duplication preserve chapter knowledge and revision chains without reactivating withdrawn claims. Older bundle formats are no longer supported; upgrade an existing SQLite library and export a new bundle from it.
+
 ## Full SQLite backup: whole-library disaster recovery
 
 Fit for before clearing browser site data, before upgrading a release package, before migrating machines, and for release-candidate acceptance:

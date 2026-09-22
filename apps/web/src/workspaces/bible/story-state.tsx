@@ -15,6 +15,7 @@ import {
   outlineStatusLabel,
 } from "../../lib/labels";
 import { projectWorkspacePath } from "../../lib/project-route";
+import { KnowledgeEditor } from "./knowledge-editor";
 
 export function StoryState({ bible }: { bible: StoryBible }) {
   const { t } = useI18n();
@@ -144,6 +145,10 @@ export function StoryState({ bible }: { bible: StoryBible }) {
               {outlineStatusLabel(chapter.status)}
             </p>
           ) : null}
+          <KnowledgeEditor
+            projectId={bible.project.id}
+            snapshot={{ chapterId, audience, characterId: input.audience === "character" ? input.characterId : null }}
+          />
           {query.isPending ? (
             <Skeleton lines={6} />
           ) : query.isError ? (

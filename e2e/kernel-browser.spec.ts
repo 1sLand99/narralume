@@ -86,6 +86,87 @@ test("本地内核 UI 主链：建项目 → 大纲 → 写作 → 版本持久 
     ),
   ).toBeVisible();
 
+  // Manual knowledge follows the same local route/transaction path, including
+  // correction history after reopening the OPFS database.
+  await page.goto(`/projects/${projectId}/bible?spread=timeline`);
+  const timelineEditor = page.getByRole("region", {
+    name: "时间线编辑",
+    exact: true,
+  });
+  await timelineEditor
+    .getByLabel("标题", { exact: true })
+    .fill("内核中的失灯事件");
+  await timelineEditor.getByLabel("开始", { exact: true }).fill("第一夜");
+  await timelineEditor
+    .getByRole("button", { name: "保存", exact: true })
+    .click();
+  await expect(page.getByRole("status")).toContainText("已写入");
+  await page.goto(
+    `/projects/${projectId}/bible?spread=outline&view=state&chapter=${encodeURIComponent(chapterId)}`,
+  );
+  await page.getByRole("button", { name: "人工登记与更正" }).click();
+  const knowledgeEditor = page.getByRole("region", {
+    name: "作者维护认知记录",
+    exact: true,
+  });
+  await knowledgeEditor
+    .getByRole("button", { name: "登记认知变化", exact: true })
+    .click();
+  const registration = knowledgeEditor.getByRole("form", {
+    name: "登记认知变化",
+    exact: true,
+  });
+  await registration
+    .getByLabel("认知命题")
+    .selectOption({ label: "内核中的失灯事件 · 未关联节点" });
+  await registration.getByLabel("认知状态").selectOption("suspected");
+  await registration.getByRole("button", { name: "保存认知登记" }).click();
+  await expect(knowledgeEditor.getByRole("status")).toContainText(
+    "认知记录已保存",
+  );
+  await knowledgeEditor
+    .getByRole("article")
+    .getByRole("button", { name: "更正登记", exact: true })
+    .click();
+  const correction = knowledgeEditor.getByRole("form", {
+    name: "更正登记",
+    exact: true,
+  });
+  await correction.getByLabel("认知状态").selectOption("known");
+  await correction.getByLabel("更正或撤销原因").fill("正文中已明确点出事件");
+  await correction.getByRole("button", { name: "保存认知登记" }).click();
+  await expect(knowledgeEditor.getByRole("status")).toContainText(
+    "认知记录已保存",
+  );
+  await page.reload();
+  const knowledge = stateView.getByRole("region", {
+    name: "认知记录",
+    exact: true,
+  });
+  await expect(knowledge.getByText("已知", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "人工登记与更正" }).click();
+  await expect(knowledgeEditor.getByText("正文中已明确点出事件")).toBeVisible();
+  await knowledgeEditor
+    .getByRole("article")
+    .filter({ hasText: "有效登记" })
+    .getByRole("button", { name: "撤销登记", exact: true })
+    .click();
+  const withdrawal = knowledgeEditor.getByRole("form", {
+    name: "撤销登记",
+    exact: true,
+  });
+  await withdrawal
+    .getByLabel("更正或撤销原因")
+    .fill("认知主体有误，撤销后重登");
+  await withdrawal
+    .getByRole("button", { name: "撤销登记", exact: true })
+    .click();
+  await expect(knowledgeEditor.getByRole("status")).toContainText(
+    "认知记录已保存",
+  );
+  await page.reload();
+  await expect(knowledge.getByRole("article")).toHaveCount(0);
+
   // runs 账本在 local 驱动下可用（运行中心空态；窄屏导航折叠，直接按地址访问）。
   await page.goto(`/projects/${projectId}/runs`);
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/runs`));

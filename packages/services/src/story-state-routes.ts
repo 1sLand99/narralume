@@ -1,6 +1,7 @@
 import {
   StoryStateQuerySchema,
   StoryStateSnapshotSchema,
+  KnowledgeWriteSchema,
 } from "@narralume/contracts";
 import { StoryStatePacketBuilder } from "@narralume/narrative";
 import {
@@ -13,6 +14,7 @@ import {
 import { z } from "zod";
 import type { RouteApp } from "./route-app.js";
 import { StoryServiceError } from "./story-service.js";
+import { KnowledgeService } from "./knowledge-service.js";
 
 const ParamsSchema = z.object({ projectId: z.string().min(1) });
 
@@ -20,6 +22,16 @@ export function registerStoryStateRoutes(
   app: RouteApp,
   database: NarrativeDatabase,
 ): void {
+  const knowledge = new KnowledgeService(database);
+  app.route("GET", "/api/projects/:projectId/knowledge", async (request) =>
+    knowledge.read(ParamsSchema.parse(request.params).projectId),
+  );
+  app.route("POST", "/api/projects/:projectId/knowledge", async (request) =>
+    knowledge.write(
+      ParamsSchema.parse(request.params).projectId,
+      KnowledgeWriteSchema.parse(request.body),
+    ),
+  );
   const projects = new SqliteProjectRepository(database);
   const canon = new SqliteCanonRepository(database);
   const story = new SqliteStoryRepository(database);

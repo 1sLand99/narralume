@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export * from "./story.js";
 export * from "./story-state.js";
+export * from "./knowledge.js";
 export * from "./run.js";
 export * from "./automation.js";
 export * from "./studio.js";

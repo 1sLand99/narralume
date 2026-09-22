@@ -1,7 +1,9 @@
 /* 故事圣经：Canon Spread 阅读面、人工编辑器与 AI 候选桌。 */
 import { storyState } from "./story-state";
+import { knowledge } from "./knowledge";
 export const bible = {
   state: storyState,
+  knowledge,
   lines: {
     title: "长期故事线", hint: "把全书承诺与当前阶段放在一起看。阶段信息由你确认和维护，保存后会供后续规划参考。",
     manage: "查看与维护长期故事线", add: "新增故事线", edit: "编辑故事线", remove: "移除故事线",

@@ -3,6 +3,11 @@ import {
   AUTOMATION_DEFAULTS,
   PersonaCardProfileSchema,
   StoryLongLineSchema,
+  CanonFactSchema,
+  KnowledgeRecordSchema,
+  KnowledgeCorrectionSchema,
+  BundleCountsSchema,
+  type BundleCounts,
 } from "@narralume/contracts";
 import { decodeBase64 as decodeBase64Bytes } from "./internal/bytes.js";
 import { declaredUncompressedSize } from "./internal/zip.js";
@@ -49,41 +54,10 @@ import type { NarrativeDatabase } from "@narralume/persistence";
 import JSZip from "jszip";
 import { z } from "zod";
 
-const BundleCountsSchema = z.object({
-  outline: z.number().int().nonnegative(),
-  entities: z.number().int().nonnegative(),
-  facts: z.number().int().nonnegative(),
-  relationships: z.number().int().nonnegative(),
-  timeline: z.number().int().nonnegative(),
-  foreshadows: z.number().int().nonnegative(),
-  documents: z.number().int().nonnegative(),
-  versions: z.number().int().nonnegative(),
-  drafts: z.number().int().nonnegative(),
-  personas: z.number().int().nonnegative(),
-  lorebooks: z.number().int().nonnegative(),
-  loreEntries: z.number().int().nonnegative(),
-  personaLorebookBindings: z.number().int().nonnegative(),
-  sessionLorebookBindings: z.number().int().nonnegative(),
-  styles: z.number().int().nonnegative(),
-  skills: z.number().int().nonnegative(),
-  annotations: z.number().int().nonnegative(),
-  cover: z.number().int().nonnegative(),
-  cocreateSessions: z.number().int().nonnegative(),
-  storyTurns: z.number().int().nonnegative(),
-  reviews: z.number().int().nonnegative(),
-  reviewIssues: z.number().int().nonnegative(),
-  assistantConversations: z.number().int().nonnegative(),
-  assistantMessages: z.number().int().nonnegative(),
-  assistantActivities: z.number().int().nonnegative(),
-  assistantLongGoals: z.number().int().nonnegative(),
-  runs: z.number().int().nonnegative(),
-});
-export type BundleCounts = z.infer<typeof BundleCountsSchema>;
-
 const BundleSchema = z.object({
   manifest: z.object({
     format: z.literal("narralume"),
-    version: z.literal(5),
+    version: z.literal(6),
     exportedAt: z.string(),
     counts: BundleCountsSchema,
     options: z
@@ -105,9 +79,22 @@ const BundleSchema = z.object({
   compass: z.record(z.string(), z.unknown()).nullable(),
   outline: z.array(z.record(z.string(), z.unknown())),
   entities: z.array(z.record(z.string(), z.unknown())),
-  facts: z.array(z.record(z.string(), z.unknown())),
+  facts: z.array(CanonFactSchema),
+  factWithdrawals: z.array(
+    z.object({
+      factId: z.string(),
+      projectId: z.string(),
+      reason: z.string(),
+      withdrawnAt: z.string(),
+    }),
+  ),
   relationships: z.array(z.record(z.string(), z.unknown())),
   timeline: z.array(z.record(z.string(), z.unknown())),
+  voidedTimeline: z.array(
+    z.object({ eventId: z.string(), voidedAt: z.string() }),
+  ),
+  knowledgeRecords: z.array(KnowledgeRecordSchema),
+  knowledgeCorrections: z.array(KnowledgeCorrectionSchema),
   foreshadows: z.array(z.record(z.string(), z.unknown())),
   documents: z.array(
     z.object({
@@ -596,11 +583,20 @@ export class DeliveryService {
     const entities = this.canon.listEntities(projectId, {
       includeRetired: true,
     });
-    const facts = this.canon.listEffectiveFacts(projectId, {
+    const facts = this.canon.listFactHistory(projectId, {
       includeCandidates: true,
+      includeWithdrawn: true,
     });
+    const factWithdrawals = this.canon.listFactWithdrawals(projectId);
     const relationships = this.state.listCurrentRelationships(projectId);
-    const timeline = this.state.listTimeline(projectId);
+    const timeline = this.state.listTimeline(projectId, {
+      includeVoided: true,
+    });
+    const voidedTimeline = this.state.listVoidedTimeline(projectId);
+    const knowledgeRecords = this.state.listKnowledge(projectId, {
+      includeCorrected: true,
+    });
+    const knowledgeCorrections = this.state.listKnowledgeCorrections(projectId);
     const foreshadows = this.state.listForeshadows(projectId);
     const documents = this.documents
       .list(projectId, undefined, true)
@@ -862,6 +858,8 @@ export class DeliveryService {
       facts: facts.length,
       relationships: relationships.length,
       timeline: timeline.length,
+      knowledgeRecords: knowledgeRecords.length,
+      knowledgeCorrections: knowledgeCorrections.length,
       foreshadows: foreshadows.length,
       documents: documents.length,
       versions: documents.reduce((sum, item) => sum + item.versions.length, 0),
@@ -903,7 +901,7 @@ export class DeliveryService {
     return BundleSchema.parse({
       manifest: {
         format: "narralume",
-        version: 5,
+        version: 6,
         exportedAt: now,
         counts,
         options,
@@ -920,8 +918,12 @@ export class DeliveryService {
       outline,
       entities,
       facts,
+      factWithdrawals,
       relationships,
       timeline,
+      voidedTimeline,
+      knowledgeRecords,
+      knowledgeCorrections,
       foreshadows,
       documents,
       personas,
@@ -1026,7 +1028,13 @@ export class DeliveryService {
         "Backup hash verification failed; the restore was not performed",
       );
     }
-    const bundle = BundleSchema.parse(JSON.parse(stored.bundleJson));
+    const checked = BundleSchema.safeParse(JSON.parse(stored.bundleJson));
+    if (!checked.success)
+      throw new DeliveryServiceError(
+        "import.bundle.invalid_schema",
+        "The project bundle structure or version is not supported",
+      );
+    const bundle = checked.data;
     return this.database.transaction(() => {
       const { projectId, counts } = this.restoreBundle(
         bundle,
@@ -1654,6 +1662,8 @@ export class DeliveryService {
     this.projects.insert(project);
     const nodeMap = new Map<string, string>();
     const entityMap = new Map<string, string>();
+    const factMap = new Map<string, string>();
+    const knowledgeMap = new Map<string, string>();
     const timelineMap = new Map<string, string>();
     const foreshadowMap = new Map<string, string>();
     const documentMap = new Map<string, string>();
@@ -1783,49 +1793,62 @@ export class DeliveryService {
           .run(povEntityId, now, projectId, nodeId);
       }
     }
-    for (const source of bundle.facts) {
-      const subjectId = entityMap.get(stringField(source, "subjectId") ?? "");
-      if (!subjectId) continue;
-      const oldObjectEntityId = stringField(source, "objectEntityId");
-      const objectEntityId = oldObjectEntityId
-        ? entityMap.get(oldObjectEntityId)
-        : null;
-      if (oldObjectEntityId && !objectEntityId) continue;
-      const validFromNodeId = nodeMap.get(
-        stringField(source, "validFromNodeId") ?? "",
-      );
-      const validToNodeId = nodeMap.get(
-        stringField(source, "validToNodeId") ?? "",
-      );
-      this.database.raw
-        .prepare(
-          `INSERT INTO canon_facts(
-            id, project_id, subject_id, predicate, object_entity_id, value_json,
-            valid_from_node_id, valid_to_node_id, knowledge_scope, knowledge_subject_id,
-            authority, confidence, source_type, source_id, supersedes_fact_id, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          randomUuid(),
-          projectId,
-          subjectId,
-          stringField(source, "predicate") ?? "未命名事实",
-          objectEntityId ?? null,
-          objectEntityId ? null : JSON.stringify(source.value ?? null),
-          validFromNodeId ?? null,
-          validToNodeId ?? null,
-          knowledgeScope(stringField(source, "knowledgeScope")),
-          entityMap.get(stringField(source, "knowledgeSubjectId") ?? "") ??
-            null,
-          canonAuthority(stringField(source, "authority")),
-          boundedNumber(source.confidence, 0, 1, 1),
-          "bundle-restore",
-          null,
-          null,
-          now,
+    const mapped = (map: Map<string, string>, id: string): string => {
+      const value = map.get(id);
+      if (!value)
+        throw new DeliveryServiceError(
+          "import.bundle.reference_missing",
+          "A story-state reference is missing from the bundle",
         );
+      return value;
+    };
+    const optionalMapped = (map: Map<string, string>, id: string | null) =>
+      id === null ? null : mapped(map, id);
+    for (const source of bundle.facts) {
+      if (factMap.has(source.id))
+        throw new DeliveryServiceError(
+          "import.bundle.invalid_schema",
+          "Duplicate fact ID in bundle",
+        );
+      const id = randomUuid();
+      factMap.set(source.id, id);
+      this.canon.insertFact({
+        ...source,
+        id,
+        projectId,
+        subjectId: mapped(entityMap, source.subjectId),
+        objectEntityId: optionalMapped(entityMap, source.objectEntityId),
+        knowledgeSubjectId: optionalMapped(
+          entityMap,
+          source.knowledgeSubjectId,
+        ),
+        validFromNodeId: optionalMapped(nodeMap, source.validFromNodeId),
+        validToNodeId: optionalMapped(nodeMap, source.validToNodeId),
+        sourceType: "bundle-restore",
+        sourceId: null,
+        supersedesFactId: null,
+      });
       restoredFacts += 1;
     }
+    // Link history only after every fact exists; bundle order is not a dependency order.
+    for (const source of bundle.facts) {
+      if (source.supersedesFactId)
+        this.database.raw
+          .prepare(
+            "UPDATE canon_facts SET supersedes_fact_id = ? WHERE project_id = ? AND id = ?",
+          )
+          .run(
+            mapped(factMap, source.supersedesFactId),
+            projectId,
+            mapped(factMap, source.id),
+          );
+    }
+    for (const source of bundle.factWithdrawals)
+      this.canon.withdrawFact({
+        ...source,
+        projectId,
+        factId: mapped(factMap, source.factId),
+      });
     for (const source of bundle.relationships) {
       const fromEntityId = entityMap.get(
         stringField(source, "fromEntityId") ?? "",
@@ -1887,6 +1910,58 @@ export class DeliveryService {
           insertCausalLink.run(causeId, effectId);
       }
     }
+    // Restore knowledge before reapplying event withdrawals. Historical records
+    // can legitimately refer to withdrawn claims, but must never lose the link.
+    // Keep the original ID tie-break order when equal-time entries are assigned
+    // new IDs. Otherwise restoring a bundle could change a character's belief.
+    const knowledgeIdPrefix = randomUuid().slice(0, 24);
+    const orderedKnowledge = [...bundle.knowledgeRecords].sort(
+      (left, right) =>
+        left.createdAt.localeCompare(right.createdAt) ||
+        left.id.localeCompare(right.id),
+    );
+    for (const [index, source] of orderedKnowledge.entries()) {
+      if (knowledgeMap.has(source.id))
+        throw new DeliveryServiceError(
+          "import.bundle.invalid_schema",
+          "Duplicate knowledge ID in bundle",
+        );
+      if (
+        Boolean(source.factId) === Boolean(source.timelineEventId) ||
+        (source.knowerType === "character") !== Boolean(source.knowerEntityId)
+      )
+        throw new DeliveryServiceError(
+          "import.bundle.invalid_schema",
+          "Invalid knowledge target in bundle",
+        );
+      const id = `${knowledgeIdPrefix}${index.toString(16).padStart(12, "0")}`;
+      knowledgeMap.set(source.id, id);
+      this.state.insertKnowledge({
+        ...source,
+        id,
+        projectId,
+        knowerEntityId: optionalMapped(entityMap, source.knowerEntityId),
+        factId: optionalMapped(factMap, source.factId),
+        timelineEventId: optionalMapped(timelineMap, source.timelineEventId),
+        learnedAtNodeId: mapped(nodeMap, source.learnedAtNodeId),
+      });
+    }
+    for (const source of bundle.knowledgeCorrections)
+      this.state.insertKnowledgeCorrection({
+        ...source,
+        projectId,
+        recordId: mapped(knowledgeMap, source.recordId),
+        replacementRecordId: optionalMapped(
+          knowledgeMap,
+          source.replacementRecordId,
+        ),
+      });
+    for (const source of bundle.voidedTimeline)
+      this.database.raw
+        .prepare(
+          "UPDATE timeline_events SET voided_at = ? WHERE project_id = ? AND id = ?",
+        )
+        .run(source.voidedAt, projectId, mapped(timelineMap, source.eventId));
     for (const source of bundle.foreshadows) {
       const oldId = required(stringField(source, "id"), "foreshadow id");
       const id = randomUuid();
@@ -2702,6 +2777,8 @@ export class DeliveryService {
       facts: restoredFacts,
       relationships: restoredRelationships,
       timeline: restoredTimeline,
+      knowledgeRecords: knowledgeMap.size,
+      knowledgeCorrections: bundle.knowledgeCorrections.length,
       foreshadows: restoredForeshadows,
       documents: documentMap.size,
       versions: restoredVersions,
@@ -3464,20 +3541,6 @@ function outlineStatus(value: string) {
   )
     ? (value as "planned" | "drafting" | "review" | "committed" | "abandoned")
     : "planned";
-}
-
-function knowledgeScope(value: string | null) {
-  return ["omniscient", "reader", "character", "author_secret"].includes(
-    value ?? "",
-  )
-    ? (value as "omniscient" | "reader" | "character" | "author_secret")
-    : "omniscient";
-}
-
-function canonAuthority(value: string | null) {
-  return ["candidate", "inferred", "confirmed", "locked"].includes(value ?? "")
-    ? (value as "candidate" | "inferred" | "confirmed" | "locked")
-    : "confirmed";
 }
 
 function projectPhase(value: string): ProjectPhase {

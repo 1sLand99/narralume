@@ -73,6 +73,8 @@ export const delivery = {
     error: "内容未恢复",
   },
   backupCounts: {
+    knowledgeRecords: "认知登记",
+    knowledgeCorrections: "认知修订",
     outline: "大纲",
     entities: "实体",
     facts: "事实",

@@ -1,8 +1,10 @@
 import type { bible as bibleZh } from "../zh/bible";
 import { storyState } from "./story-state";
+import { knowledge } from "./knowledge";
 
 export const bible: typeof bibleZh = {
   state: storyState,
+  knowledge,
   lines: {
     title: "Long story lines", hint: "See book-wide promises alongside the current stage. You maintain these stage records; saved changes inform subsequent planning.",
     manage: "View and maintain long story lines", add: "Add story line", edit: "Edit story line", remove: "Remove story line",

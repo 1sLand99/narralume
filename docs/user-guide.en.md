@@ -98,6 +98,16 @@ Build the hierarchy of volumes, chapters, and scenes, with titles, summaries, an
 
 The outline is the writing plan, not the prose. Editing the outline does not automatically rewrite chapters that are already saved.
 
+### Inspect and maintain knowledge by chapter
+
+Under "Story → Outline → Chapter state", select a chapter and perspective to inspect registrations through the end of that chapter, including its scenes. A changed fact does not imply a character has learned it. Beliefs, suspicions and false beliefs appear separately; no registration does not imply ignorance.
+
+Open "Register and correct knowledge" for author maintenance. This includes records and revision history for the whole book, regardless of the perspective filter. Select the reader or a character, an existing fact or event, a belief state, and a committed chapter or scene. Backdated registrations retain later changes in knowledge.
+
+Use "Register knowledge change" when a belief changes later in the story. Use "Correct registration" to fix an incorrect belief state or evidence node, with a reason. If the knower or claim is wrong, withdraw the entry and register it again. Original entries and reasons remain in history. Withdrawal may reveal an earlier valid entry; it does not represent forgetting in the story.
+
+If relevant records or references change before saving, your input is preserved with a conflict message. Copy what you want to keep, then choose "Discard changes and reload", review and submit again. Saved records inform inspection and future generation without rewriting existing prose.
+
 ### Entities, canon facts, and relations
 
 - "Entities" holds people, places, organizations, items, and similar objects.

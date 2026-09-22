@@ -75,6 +75,8 @@ export const delivery: typeof deliveryZh = {
     error: "Content was not restored",
   },
   backupCounts: {
+    knowledgeRecords: "Knowledge records",
+    knowledgeCorrections: "Knowledge revisions",
     outline: "Outline",
     entities: "Entities",
     facts: "Facts",

@@ -47,6 +47,16 @@ export const errors: typeof errorsZh = {
     routeNotFound: "The API endpoint does not exist.",
   },
   message: {
+    importBundleReferenceMissing: "The bundle is missing data referenced by knowledge or facts. Restore was cancelled without creating an incomplete copy.",
+    knowledgeVersionConflict: "Knowledge or its references changed. Reload and review before saving.",
+    knowledgeIdempotencyConflict: "This submission ID was used for different changes. Reload and try again.",
+    knowledgeRecordUnavailable: "This registration was corrected, withdrawn or is unavailable. Reload to continue.",
+    knowledgeTargetMismatch: "Corrections cannot change the knower or claim. Withdraw and register again.",
+    knowledgeCharacterUnavailable: "Select an available character in this project.",
+    knowledgeEvidenceUnavailable: "Select a non-abandoned, committed chapter or one of its scenes as evidence.",
+    knowledgeClaimUnavailable: "The claim is unavailable. Select an established fact or active event in this project.",
+    knowledgeFutureClaim: "The claim occurs after the evidence node. Check the learning position or selected claim.",
+    knowledgeDuplicate: "This knower already has this claim registered at this node. Correct the existing record.",
     storyStateChapterUnavailable: "The selected chapter is missing or abandoned. Select another chapter.",
     storyStateCharacterUnavailable: "The selected character is unavailable in this project. Select another character.",
     trialAutopilotChapterLimit:

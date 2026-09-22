@@ -64,6 +64,14 @@ export interface KnowledgeRecord {
   createdAt: IsoDateTime;
 }
 
+export interface KnowledgeCorrection {
+  recordId: string;
+  projectId: ProjectId;
+  replacementRecordId: string | null;
+  reason: string;
+  createdAt: IsoDateTime;
+}
+
 export interface NarrativeSummary {
   id: string;
   projectId: ProjectId;

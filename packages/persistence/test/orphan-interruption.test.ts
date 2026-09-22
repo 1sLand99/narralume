@@ -259,7 +259,7 @@ describe("migration 015 (llm-call-interruption)", () => {
         .run(now);
 
       legacy.migrate();
-      expect(legacy.currentMigration()).toBe(44);
+      expect(legacy.currentMigration()).toBe(45);
 
       const tool = legacy.raw
         .prepare("SELECT llm_call_id FROM tool_calls WHERE id = 't1'")

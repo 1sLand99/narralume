@@ -224,6 +224,8 @@ export const ApplyImportRequestSchema = z.object({
 });
 
 export const BundleCountsSchema = z.object({
+  knowledgeRecords: z.number().int().nonnegative(),
+  knowledgeCorrections: z.number().int().nonnegative(),
   outline: z.number().int().nonnegative(),
   entities: z.number().int().nonnegative(),
   facts: z.number().int().nonnegative(),
@@ -262,7 +264,9 @@ export const ProjectBackupSchema = z.object({
   sizeBytes: z.number().int().nonnegative(),
   createdAt: TimestampSchema,
   restoredProjectId: IdSchema.nullable(),
-  counts: BundleCountsSchema.optional(),
+  // Snapshot metadata describes what that snapshot contains; restoring a
+  // bundle separately requires the complete manifest for the current format.
+  counts: z.record(z.string(), z.number().int().nonnegative()).optional(),
 });
 export const CreateBackupRequestSchema = z.object({
   label: z.string().trim().min(1).max(300),

@@ -33,6 +33,16 @@ export const errors = {
   },
   /* 主文案：键为后端错误码的 camelCase 形式；ApiError 命中即用本地化文案。 */
   message: {
+    importBundleReferenceMissing: "备份缺少认知或事实依赖的数据，已取消恢复，未创建不完整副本。",
+    knowledgeVersionConflict: "认知记录或其引用资料已发生变化，请重新载入后核对再保存。",
+    knowledgeIdempotencyConflict: "此次提交标识已用于其他修改，请重新载入后再试。",
+    knowledgeRecordUnavailable: "该登记已被更正、撤销或已不可用，请重新载入。",
+    knowledgeTargetMismatch: "更正不能改变认知主体或命题，请撤销后重新登记。",
+    knowledgeCharacterUnavailable: "请选择本作品中仍可用的人物。",
+    knowledgeEvidenceUnavailable: "请选择未废弃的已定稿章节或其场景作为证据。",
+    knowledgeClaimUnavailable: "所选命题不可用，请选择本作品已有的非候选事实或有效事件。",
+    knowledgeFutureClaim: "命题发生在证据节点之后，请核对习得位置或所选命题。",
+    knowledgeDuplicate: "该主体在此节点已有同一命题的登记，请更正现有记录。",
     storyStateChapterUnavailable: "所选章节不存在或已废弃，请重新选择。",
     storyStateCharacterUnavailable: "所选人物不属于本作品或已不可用，请重新选择。",
     trialAutopilotChapterLimit:

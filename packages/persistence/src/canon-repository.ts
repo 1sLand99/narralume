@@ -288,12 +288,17 @@ export class SqliteCanonRepository {
 
   listFactHistory(
     projectId: string,
-    options: { subjectId?: string; includeCandidates?: boolean } = {},
+    options: {
+      subjectId?: string;
+      includeCandidates?: boolean;
+      includeWithdrawn?: boolean;
+    } = {},
   ): CanonFact[] {
-    const where = [
-      "fact.project_id = ?",
-      "NOT EXISTS (SELECT 1 FROM canon_fact_withdrawals withdrawal WHERE withdrawal.fact_id = fact.id)",
-    ];
+    const where = ["fact.project_id = ?"];
+    if (!options.includeWithdrawn)
+      where.push(
+        "NOT EXISTS (SELECT 1 FROM canon_fact_withdrawals withdrawal WHERE withdrawal.fact_id = fact.id)",
+      );
     const parameters: string[] = [projectId];
     if (options.subjectId) {
       where.push("fact.subject_id = ?");
@@ -317,6 +322,15 @@ export class SqliteCanonRepository {
       )
       .run(input.factId, input.projectId, input.reason, input.withdrawnAt);
     return input;
+  }
+
+  listFactWithdrawals(projectId: string): CanonFactWithdrawal[] {
+    return this.database.raw
+      .prepare(
+        `SELECT fact_id AS factId, project_id AS projectId, reason, withdrawn_at AS withdrawnAt
+       FROM canon_fact_withdrawals WHERE project_id = ? ORDER BY withdrawn_at, fact_id`,
+      )
+      .all(projectId) as unknown as CanonFactWithdrawal[];
   }
 
   promoteFact(

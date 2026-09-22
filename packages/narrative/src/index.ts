@@ -1,6 +1,11 @@
 export * from "./model-client.js";
 export * from "./embedding-support.js";
 export * from "./story-state-packet.js";
+export {
+  buildOutlineScope,
+  nodeIsNotAfterTarget,
+  factLineage,
+} from "./story-state-selection.js";
 export * from "./settlement-application-service.js";
 export * from "./outline-context.js";
 export * from "./outline-baseline.js";

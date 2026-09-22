@@ -90,7 +90,7 @@ describe("product lifecycle API", () => {
       url: `/api/projects/${project.id}/exports/narrative-bundle?versionMode=history&includeAnnotations=true&includeRuns=true`,
     });
     expect(auditBundle.statusCode).toBe(200);
-    expect(auditBundle.json().manifest.version).toBe(5);
+    expect(auditBundle.json().manifest.version).toBe(6);
     expect(auditBundle.json().manifest.options).toEqual({
       versionMode: "history",
       includeAnnotations: true,
@@ -295,7 +295,7 @@ describe("product lifecycle API", () => {
     });
     const restoredDatabase = new NodeNarrativeDatabase(receipt.databasePath);
     try {
-      expect(restoredDatabase.currentMigration()).toBe(44);
+      expect(restoredDatabase.currentMigration()).toBe(45);
       expect(
         Number(
           (

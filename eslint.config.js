@@ -10,6 +10,8 @@ export default tseslint.config(
       "**/coverage/**",
       "**/node_modules/**",
       ".tmp/**",
+      "playwright-report/**",
+      "test-results/**",
       "data/**",
       "*.sqlite*",
     ],

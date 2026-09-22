@@ -1,6 +1,10 @@
 import {
   type StoryStateQuery,
   type StoryStateSnapshotDto,
+  type KnowledgeEditorDto,
+  type KnowledgeWrite,
+  type KnowledgeWriteResult,
+  type BundleCounts,
   type OutlineChangeRequest,
   type OutlineChangePreview,
   MIN_VIABLE_PARTIAL_CHARACTERS,
@@ -650,31 +654,7 @@ export interface ImportBatchDetail {
   }[];
 }
 
-export interface BundleCounts {
-  outline: number;
-  entities: number;
-  facts: number;
-  relationships: number;
-  timeline: number;
-  foreshadows: number;
-  documents: number;
-  versions: number;
-  drafts: number;
-  personas: number;
-  styles: number;
-  skills: number;
-  annotations: number;
-  cover: number;
-  cocreateSessions: number;
-  storyTurns: number;
-  reviews: number;
-  reviewIssues: number;
-  assistantConversations: number;
-  assistantMessages: number;
-  assistantActivities: number;
-  assistantLongGoals: number;
-  runs: number;
-}
+export type { BundleCounts } from "@narralume/contracts";
 
 export interface ProjectBackup {
   id: string;
@@ -684,7 +664,7 @@ export interface ProjectBackup {
   sizeBytes: number;
   createdAt: string;
   restoredProjectId: string | null;
-  counts?: BundleCounts | null;
+  counts?: Record<string, number> | null;
 }
 
 export interface ImportUploadSession {
@@ -1709,6 +1689,14 @@ export async function getStoryBible(
 export async function getStoryState(projectId: string, input: StoryStateQuery, signal?: AbortSignal): Promise<StoryStateSnapshotDto> {
   const query = new URLSearchParams(input);
   return requestJson(`/api/projects/${encodeURIComponent(projectId)}/story-state?${query}`, signal ? { signal } : {});
+}
+
+export async function getKnowledgeEditor(projectId: string, signal?: AbortSignal): Promise<KnowledgeEditorDto> {
+  return requestJson(`/api/projects/${encodeURIComponent(projectId)}/knowledge`, signal ? { signal } : {});
+}
+
+export async function writeKnowledge(projectId: string, input: KnowledgeWrite): Promise<KnowledgeWriteResult> {
+  return requestJson(`/api/projects/${encodeURIComponent(projectId)}/knowledge`, jsonRequest("POST", input));
 }
 
 export async function startCanonCandidate(

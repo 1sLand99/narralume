@@ -356,12 +356,14 @@ export function DeliveryWorkspace() {
 }
 
 /** 备份计数清单的紧凑展示：只列出非零项，保持墨色 mono 风格。 */
-function summarizeBackupCounts(counts: BundleCounts) {
+function summarizeBackupCounts(counts: Record<string, number>) {
   const locale = getLocale();
   const labels: [keyof BundleCounts, MessageKey][] = [
     ["outline", "delivery.backupCounts.outline"],
     ["entities", "delivery.backupCounts.entities"],
     ["facts", "delivery.backupCounts.facts"],
+    ["knowledgeRecords", "delivery.backupCounts.knowledgeRecords"],
+    ["knowledgeCorrections", "delivery.backupCounts.knowledgeCorrections"],
     ["documents", "delivery.backupCounts.documents"],
     ["versions", "delivery.backupCounts.versions"],
     ["drafts", "delivery.backupCounts.drafts"],

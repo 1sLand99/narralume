@@ -107,6 +107,56 @@
   padding: 0.75rem 0;
   border-bottom: 1px solid var(--hairline);
 }
+.knowledge-editor > section {
+  padding: 1rem;
+  border: 1px solid var(--hairline);
+  background: var(--paper);
+}
+.knowledge-editor__form {
+  margin: 1rem 0;
+  padding: 1rem;
+  border-left: 3px solid var(--canon);
+  background: var(--paper-deep, var(--paper));
+}
+.knowledge-editor__form fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+.knowledge-editor label {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.knowledge-editor select,
+.knowledge-editor textarea {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0.7rem;
+  font: inherit;
+  color: inherit;
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+}
+.knowledge-editor__actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.knowledge-editor__history {
+  margin-top: 1.5rem;
+}
+.knowledge-editor__history > label {
+  margin: 1rem 0;
+  max-width: 28rem;
+}
+.knowledge-editor__revision {
+  border-top: 1px solid var(--hairline);
+}
 @media (max-width: 640px) {
   .story-state__filters {
     grid-template-columns: minmax(0, 1fr);

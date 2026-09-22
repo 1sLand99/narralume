@@ -1,5 +1,6 @@
 import type {
   Foreshadow,
+  KnowledgeCorrection,
   KnowledgeRecord,
   NarrativeSummary,
   RelationshipEvent,
@@ -213,10 +214,13 @@ export class SqliteNarrativeStateRepository {
     });
   }
 
-  listTimeline(projectId: string): TimelineEvent[] {
+  listTimeline(
+    projectId: string,
+    options: { includeVoided?: boolean } = {},
+  ): TimelineEvent[] {
     const rows = this.database.raw
       .prepare(
-        "SELECT * FROM timeline_events WHERE project_id = ? AND voided_at IS NULL ORDER BY sequence, created_at",
+        `SELECT * FROM timeline_events WHERE project_id = ? ${options.includeVoided ? "" : "AND voided_at IS NULL"} ORDER BY sequence, created_at, id`,
       )
       .all(projectId) as unknown as TimelineRow[];
     const participants = this.database.raw.prepare(
@@ -227,7 +231,7 @@ export class SqliteNarrativeStateRepository {
        FROM causal_links links
        JOIN timeline_events cause
          ON cause.project_id = ? AND cause.id = links.cause_event_id
-          AND cause.voided_at IS NULL
+          ${options.includeVoided ? "" : "AND cause.voided_at IS NULL"}
        WHERE links.effect_event_id = ?
        ORDER BY links.cause_event_id`,
     );
@@ -286,6 +290,20 @@ export class SqliteNarrativeStateRepository {
         .run(projectId, id);
     });
     return { disposition: "deleted", references: 0 };
+  }
+
+  listVoidedTimeline(
+    projectId: string,
+  ): Array<{ eventId: string; voidedAt: string }> {
+    return this.database.raw
+      .prepare(
+        `SELECT id AS eventId, voided_at AS voidedAt FROM timeline_events
+       WHERE project_id = ? AND voided_at IS NOT NULL ORDER BY id`,
+      )
+      .all(projectId) as unknown as Array<{
+      eventId: string;
+      voidedAt: string;
+    }>;
   }
 
   updateTimelineEvent(event: TimelineEvent): TimelineEvent {
@@ -641,10 +659,15 @@ export class SqliteNarrativeStateRepository {
     return record;
   }
 
-  listKnowledge(projectId: string): KnowledgeRecord[] {
+  listKnowledge(
+    projectId: string,
+    options: { includeCorrected?: boolean } = {},
+  ): KnowledgeRecord[] {
     const rows = this.database.raw
       .prepare(
-        "SELECT * FROM knowledge_records WHERE project_id = ? ORDER BY created_at, id",
+        `SELECT * FROM knowledge_records WHERE project_id = ?
+         ${options.includeCorrected ? "" : "AND NOT EXISTS (SELECT 1 FROM knowledge_corrections correction WHERE correction.record_id = knowledge_records.id)"}
+         ORDER BY created_at, id`,
       )
       .all(projectId) as unknown as KnowledgeRow[];
     return rows.map((row) => ({
@@ -659,6 +682,59 @@ export class SqliteNarrativeStateRepository {
       sourceId: row.source_id,
       createdAt: row.created_at,
     }));
+  }
+
+  listKnowledgeCorrections(projectId: string): KnowledgeCorrection[] {
+    return this.database.raw
+      .prepare(
+        `SELECT record_id AS recordId, project_id AS projectId,
+       replacement_record_id AS replacementRecordId, reason, created_at AS createdAt
+       FROM knowledge_corrections WHERE project_id = ? ORDER BY created_at, record_id`,
+      )
+      .all(projectId) as unknown as KnowledgeCorrection[];
+  }
+
+  insertKnowledgeCorrection(
+    correction: KnowledgeCorrection,
+  ): KnowledgeCorrection {
+    const records = this.listKnowledge(correction.projectId, {
+      includeCorrected: true,
+    });
+    const original = records.find(
+      (record) => record.id === correction.recordId,
+    );
+    const replacement = records.find(
+      (record) => record.id === correction.replacementRecordId,
+    );
+    if (!original || (correction.replacementRecordId && !replacement))
+      throw new NarrativeStateError(
+        "knowledge.record_unavailable",
+        "Knowledge record not found in this project",
+      );
+    if (
+      replacement &&
+      (original.knowerType !== replacement.knowerType ||
+        original.knowerEntityId !== replacement.knowerEntityId ||
+        original.factId !== replacement.factId ||
+        original.timelineEventId !== replacement.timelineEventId)
+    )
+      throw new NarrativeStateError(
+        "knowledge.target_mismatch",
+        "A correction must retain the knower and claim",
+      );
+    this.database.raw
+      .prepare(
+        `INSERT INTO knowledge_corrections(record_id, project_id, replacement_record_id, reason, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        correction.recordId,
+        correction.projectId,
+        correction.replacementRecordId,
+        correction.reason,
+        correction.createdAt,
+      );
+    return correction;
   }
 
   upsertSummary(summary: NarrativeSummary): NarrativeSummary {
