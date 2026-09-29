@@ -1222,6 +1222,8 @@ export class ChapterWorkerSuite {
     add("author-intent", "author", this.story.getAuthorIntent(projectId));
     add("author-compass", "author", this.automation.getCompass(projectId));
     add("author-steering", "author", snapshot.run.policy.steerNotes);
+    for (const entity of this.canon.listEntities(projectId))
+      add(`entity:${entity.id}`, "canon", entity);
     for (const fact of this.canon.listEffectiveFacts(projectId))
       add(`fact:${fact.id}`, "canon", fact);
     const outline = this.story.listOutline(projectId);

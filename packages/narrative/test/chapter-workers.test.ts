@@ -254,8 +254,9 @@ describe("ChapterWorkerSuite", () => {
     "semantic-review",
     "semantic-review-verification",
     "chapter-settlement",
+    "canon-entity-change",
   ])(
-    "invalidates evidence when author commitments change during %s",
+    "invalidates evidence when authoritative sources change during %s",
     async (changedPurpose) => {
       const manuscript =
         "雾从海面推上石阶。林昼把手按在冰冷的门上。\n\n灯灭的一刻，父亲忽然问她为何对着空椅子说话。";
@@ -267,7 +268,16 @@ describe("ChapterWorkerSuite", () => {
       const original = model.structured;
       model.structured = async (...args) => {
         const result = await original(...args);
-        if (args[2] === changedPurpose) {
+        if (
+          changedPurpose === "canon-entity-change" &&
+          args[2] === "chapter-settlement"
+        ) {
+          const canon = new SqliteCanonRepository(database);
+          canon.updateEntity({
+            ...canon.listEntities("p1")[0]!,
+            description: "作者修改了人物身份。",
+          });
+        } else if (args[2] === changedPurpose) {
           const story = new SqliteStoryRepository(database);
           story.upsertAuthorIntent({
             ...story.getAuthorIntent("p1")!,

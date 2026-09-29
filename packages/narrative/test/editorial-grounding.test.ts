@@ -145,4 +145,18 @@ describe("grounded editorial routing", () => {
       sources[0],
     ]);
   });
+
+  it("retains relevant history when required canon exceeds the history allowance", () => {
+    const expandedSources = [
+      { ...sources[0]!, content: "Required canon. ".repeat(1000) },
+      sources[1]!,
+    ];
+    const selected = selectEditorialSources(expandedSources, "罗川说过", 1000);
+    expect(selected[0]).toEqual(expandedSources[0]);
+    expect(selected[1]).toMatchObject({
+      content: expandedSources[1]!.content,
+      kind: "manuscript",
+      version: expandedSources[1]!.version,
+    });
+  });
 });

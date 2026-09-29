@@ -180,7 +180,7 @@ export function applyEditorialCheck(
 export function selectEditorialSources(
   sources: readonly EditorialSource[],
   query: string,
-  maxCharacters: number,
+  maxHistoryCharacters: number,
 ): EditorialSource[] {
   const terms = [
     ...new Set(
@@ -195,8 +195,7 @@ export function selectEditorialSources(
       : [term],
   );
   const fixed = sources.filter((s) => s.kind !== "manuscript");
-  let remaining =
-    maxCharacters - fixed.reduce((n, s) => n + s.content.length, 0);
+  let remaining = maxHistoryCharacters;
   const passages = sources
     .filter((s) => s.kind === "manuscript")
     .flatMap((source) => {
