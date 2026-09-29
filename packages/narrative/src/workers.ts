@@ -1193,6 +1193,24 @@ export class ChapterWorkerSuite {
     };
   }
 
+  private requireCurrentEditorialSources(snapshot: RunSnapshot): void {
+    const fingerprint = [...snapshot.steps]
+      .reverse()
+      .find(
+        (step) =>
+          step.kind === "semantic.review" && step.status === "succeeded",
+      )?.outputArtifact?.sourceFingerprint;
+    if (
+      typeof fingerprint === "string" &&
+      fingerprint !== sha256(JSON.stringify(this.editorialSources(snapshot)))
+    ) {
+      throw permanent(
+        "review.source_changed",
+        "Author commitments or committed manuscripts changed after review; review again before settlement or commit",
+      );
+    }
+  }
+
   private editorialSources(snapshot: RunSnapshot): EditorialSource[] {
     const projectId = snapshot.run.projectId;
     const sources: EditorialSource[] = [];
@@ -1426,6 +1444,7 @@ export class ChapterWorkerSuite {
     signal: AbortSignal,
   ): Promise<StepExecutionResult> {
     const manual = this.manualSettlementTarget(snapshot);
+    if (!manual) this.requireCurrentEditorialSources(snapshot);
     const content = manual ? manual.content : finalContent(snapshot);
     const locator = manual
       ? new ParagraphLocator(content, {
@@ -1570,7 +1589,11 @@ export class ChapterWorkerSuite {
         replayVersion.id,
         replayVersion.contentHash,
       );
-      this.reviews.acceptRunRevisionProposals(run.id, now);
+      this.reviews.resolveRunRevisionProposals(
+        run.id,
+        replayVersion.content,
+        now,
+      );
       return {
         artifactKind: "chapter-commit",
         output: {
@@ -1594,6 +1617,7 @@ export class ChapterWorkerSuite {
     const output = this.database.transaction(() => {
       requireActiveRunCommit(this.database, run.id, run.projectId, signal);
       requireCurrentChapterOutline(this.database, snapshot);
+      this.requireCurrentEditorialSources(snapshot);
       let document = stringOrNull(context.baseDocumentId)
         ? this.documents.get(
             run.projectId,
@@ -1622,7 +1646,7 @@ export class ChapterWorkerSuite {
         step.id,
       );
       if (existing) {
-        this.reviews.acceptRunRevisionProposals(run.id, now);
+        this.reviews.resolveRunRevisionProposals(run.id, existing.content, now);
         return {
           documentId: document.id,
           versionId: existing.id,
@@ -1648,7 +1672,7 @@ export class ChapterWorkerSuite {
           currentVersion.id,
           currentVersion.contentHash,
         );
-        this.reviews.acceptRunRevisionProposals(run.id, now);
+        this.reviews.resolveRunRevisionProposals(run.id, content, now);
         return {
           documentId: document.id,
           versionId: currentVersion.id,
@@ -1675,7 +1699,7 @@ export class ChapterWorkerSuite {
         version.id,
         version.contentHash,
       );
-      this.reviews.acceptRunRevisionProposals(run.id, now);
+      this.reviews.resolveRunRevisionProposals(run.id, content, now);
       const entityIds = settlementEntityIds(boundSettlement).filter((id) =>
         Boolean(this.canon.getEntity(run.projectId, id)),
       );

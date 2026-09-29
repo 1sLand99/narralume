@@ -575,15 +575,19 @@ export class SqliteReviewRepository {
     }));
   }
 
-  acceptRunRevisionProposals(runId: string, decidedAt: string): number {
+  resolveRunRevisionProposals(
+    runId: string,
+    committedContent: string,
+    decidedAt: string,
+  ): number {
     return Number(
       this.database.raw
         .prepare(
           `UPDATE revision_proposals
-           SET status = 'accepted', decided_at = ?
+           SET status = CASE WHEN revised_content = ? THEN 'accepted' ELSE 'superseded' END, decided_at = ?
            WHERE run_id = ? AND status = 'proposed'`,
         )
-        .run(decidedAt, runId).changes,
+        .run(committedContent, decidedAt, runId).changes,
     );
   }
 

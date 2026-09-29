@@ -17,6 +17,7 @@ import {
   SqliteProjectRepository,
   SqliteProviderRepository,
   SqliteRunRepository,
+  SqliteReviewRepository,
   SqliteStoryRepository,
 } from "@narralume/persistence";
 import { NodeNarrativeDatabase } from "@narralume/persistence/node";
@@ -131,7 +132,7 @@ afterEach(() => database.close());
 describe("ChapterWorkerSuite", () => {
   it("recompiles optional context around the actual manuscript while preserving required author constraints", async () => {
     const manuscript =
-      "雾从海面推上石阶。林昼把手按在冰冷的门上。灯灭的一刻，父亲忽然问她为何对着空椅子说话。";
+      "雾从海面推上石阶。林昼把手按在冰冷的门上。\n\n灯灭的一刻，父亲忽然问她为何对着空椅子说话。";
     const model = scriptedModel(manuscript);
     model.effectiveContextWindow = () => 16_000;
     model.effectiveOutputLimit = () => 4_000;
@@ -181,7 +182,8 @@ describe("ChapterWorkerSuite", () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]).not.toContain("irrelevant-history");
     expect(seen[0]).toContain("不使用廉价失忆反转");
-    expect(seen[0]).toContain(manuscript);
+    for (const paragraph of manuscript.split("\n\n"))
+      expect(seen[0]).toContain(paragraph);
     const receipts = new SqliteContextReceiptRepository(database).list("p1");
     expect(
       receipts.some((r) =>
@@ -190,26 +192,12 @@ describe("ChapterWorkerSuite", () => {
     ).toBe(true);
   });
 
-  it("invalidates evidence when the author changes commitments during targeted verification", async () => {
+  it("marks only the actually committed revision accepted and supersedes rejected candidates", async () => {
     const manuscript =
       "雾从海面推上石阶。林昼把手按在冰冷的门上。\n\n灯灭的一刻，父亲忽然问她为何对着空椅子说话。";
-    const model = scriptedModel(manuscript, { reviewVerdicts: ["revise"] });
-    const original = model.structured;
-    model.structured = async (...args) => {
-      const result = await original(...args);
-      if (args[2] === "semantic-review-verification") {
-        const story = new SqliteStoryRepository(database);
-        story.upsertAuthorIntent({
-          ...story.getAuthorIntent("p1")!,
-          promise: "作者更新了承诺。",
-          updatedAt: "2026-08-10T00:00:01.000Z",
-        });
-      }
-      return result;
-    };
-    const recipe = buildChapterRecipe("run-changed-evidence", 1);
+    const recipe = buildChapterRecipe("run-proposal-selection", 1);
     runs.create({
-      id: "run-changed-evidence",
+      id: "run-proposal-selection",
       projectId: "p1",
       recipe: recipe.name,
       recipeVersion: recipe.version,
@@ -219,23 +207,105 @@ describe("ChapterWorkerSuite", () => {
       steps: recipe.steps,
       now,
     });
-    const supervisor = new HarnessSupervisor(
-      runs,
-      new ChapterWorkerSuite(database, model, () => new Date(now)).registry(),
-      { now: () => new Date(now) },
+    const reviews = new SqliteReviewRepository(database);
+    for (const [id, revisedContent] of [
+      ["selected", manuscript],
+      ["rejected", "This candidate was rejected."],
+    ]) {
+      reviews.insertRevisionProposal({
+        id: id!,
+        projectId: "p1",
+        runId: "run-proposal-selection",
+        stepId: recipe.steps.find((s) => s.kind === "revision.generate")!.id,
+        baseDocumentVersionId: null,
+        revisedContent: revisedContent!,
+        diff: [],
+        addressedIssueIds: [],
+        status: "proposed",
+        createdAt: now,
+      });
+    }
+    const suite = new ChapterWorkerSuite(
+      database,
+      scriptedModel(manuscript),
+      () => new Date(now),
     );
-    for (let index = 0; index < 20; index++)
-      await supervisor.processNext("evidence-change-test");
-    const snapshot = runs.getSnapshot("run-changed-evidence");
-    expect(snapshot.run.status).toBe("failed");
+    const supervisor = new HarnessSupervisor(runs, suite.registry(), {
+      now: () => new Date(now),
+    });
+    for (let i = 0; i < 30; i++)
+      if (!(await supervisor.processNext("worker-test"))) break;
     expect(
-      snapshot.steps.find((step) => step.kind === "semantic.review")?.error
-        ?.code,
-    ).toBe("review.source_changed");
+      runs.getSnapshot("run-proposal-selection").run.status,
+      JSON.stringify(
+        runs.getSnapshot("run-proposal-selection").steps.map((s) => s.error),
+      ),
+    ).toBe("completed");
     expect(
-      snapshot.steps.find((step) => step.kind === "chapter.commit")?.status,
-    ).toBe("pending");
+      database.raw
+        .prepare("SELECT id, status FROM revision_proposals ORDER BY id")
+        .all(),
+    ).toEqual([
+      { id: "rejected", status: "superseded" },
+      { id: "selected", status: "accepted" },
+    ]);
   });
+  it.each([
+    "semantic-review",
+    "semantic-review-verification",
+    "chapter-settlement",
+  ])(
+    "invalidates evidence when author commitments change during %s",
+    async (changedPurpose) => {
+      const manuscript =
+        "雾从海面推上石阶。林昼把手按在冰冷的门上。\n\n灯灭的一刻，父亲忽然问她为何对着空椅子说话。";
+      const model = scriptedModel(manuscript, {
+        reviewVerdicts: [
+          changedPurpose === "semantic-review-verification" ? "revise" : "pass",
+        ],
+      });
+      const original = model.structured;
+      model.structured = async (...args) => {
+        const result = await original(...args);
+        if (args[2] === changedPurpose) {
+          const story = new SqliteStoryRepository(database);
+          story.upsertAuthorIntent({
+            ...story.getAuthorIntent("p1")!,
+            promise: "作者更新了承诺。",
+            updatedAt: "2026-08-10T00:00:01.000Z",
+          });
+        }
+        return result;
+      };
+      const recipe = buildChapterRecipe("run-changed-evidence", 1);
+      runs.create({
+        id: "run-changed-evidence",
+        projectId: "p1",
+        recipe: recipe.name,
+        recipeVersion: recipe.version,
+        mode: "autopilot",
+        targetOutlineNodeId: chapterId,
+        policy: { minChapterCharacters: 20 },
+        steps: recipe.steps,
+        now,
+      });
+      const supervisor = new HarnessSupervisor(
+        runs,
+        new ChapterWorkerSuite(database, model, () => new Date(now)).registry(),
+        { now: () => new Date(now) },
+      );
+      for (let index = 0; index < 20; index++)
+        await supervisor.processNext("evidence-change-test");
+      const snapshot = runs.getSnapshot("run-changed-evidence");
+      expect(snapshot.run.status).toBe("failed");
+      expect(
+        snapshot.steps.find((step) => step.status === "failed")?.error?.code,
+      ).toBe("review.source_changed");
+      expect(
+        new SqliteDocumentRepository(database).list("p1", "chapter"),
+      ).toHaveLength(0);
+    },
+  );
 
   it("checks the order again after asynchronous indexing and lets a fresh run use the new order", async () => {
     const story = new SqliteStoryRepository(database);
