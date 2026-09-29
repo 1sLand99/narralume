@@ -1,8 +1,5 @@
 import { z } from "zod";
 
-export const QualityPresetSchema = z.enum(["fast", "standard", "deep"]);
-export type QualityPreset = z.infer<typeof QualityPresetSchema>;
-
 /**
  * Shared execution-policy input schema. Every field is optional; unresolved
  * fields are filled by resolveEffectivePolicy. The schema is strict so the
@@ -11,7 +8,6 @@ export type QualityPreset = z.infer<typeof QualityPresetSchema>;
  */
 export const ModelExecutionPolicySchema = z
   .object({
-    qualityPreset: QualityPresetSchema.optional(),
     // Deadlines & timeouts (ms).
     requestStartTimeoutMs: z.number().int().positive().max(600_000).optional(),
     streamIdleTimeoutMs: z.number().int().positive().max(1_800_000).optional(),
@@ -27,85 +23,12 @@ export const ModelExecutionPolicySchema = z
     maxRetries: z.number().int().min(0).max(5).optional(),
     retryBaseDelayMs: z.number().int().positive().max(60_000).optional(),
     maxRepairAttempts: z.number().int().min(0).max(3).optional(),
-    // Output/token shaping. These are work ceilings and are always clamped by
-    // the assigned model's declared physical limits at dispatch time.
-    contextWindow: z.number().int().min(8_000).max(2_000_000).optional(),
-    draftMaxOutputTokens: z.number().int().min(500).max(100_000).optional(),
-    reviewMaxOutputTokens: z.number().int().min(500).max(100_000).optional(),
-    settlementMaxOutputTokens: z
-      .number()
-      .int()
-      .min(500)
-      .max(100_000)
-      .optional(),
-    planningMaxOutputTokens: z.number().int().min(500).max(100_000).optional(),
     minChapterCharacters: z.number().int().min(100).max(100_000).optional(),
   })
   .strict();
 export type ModelExecutionPolicy = z.infer<typeof ModelExecutionPolicySchema>;
 
-export interface QualityPresetExpansion {
-  maxRevisionCycles: number;
-  maxRepairAttempts: number;
-  semanticReview: boolean;
-  contextWindow: number;
-  draftMaxOutputTokens: number;
-  reviewMaxOutputTokens: number;
-  settlementMaxOutputTokens: number;
-  planningMaxOutputTokens: number;
-  logicalCallDeadlineMs: number;
-  stepDeadlineMs: number;
-  runDeadlineMs: number;
-}
-
-/**
- * Initial B1 quality-preset work ceilings. Real endpoint evaluation may tune
- * the numbers, but every preset follows the same model-aware clamp rules.
- */
-export const QUALITY_PRESETS: Record<QualityPreset, QualityPresetExpansion> = {
-  fast: {
-    maxRevisionCycles: 0,
-    maxRepairAttempts: 0,
-    semanticReview: true,
-    contextWindow: 64_000,
-    draftMaxOutputTokens: 16_000,
-    reviewMaxOutputTokens: 16_000,
-    settlementMaxOutputTokens: 16_000,
-    planningMaxOutputTokens: 16_000,
-    logicalCallDeadlineMs: 600_000,
-    stepDeadlineMs: 900_000,
-    runDeadlineMs: 1_800_000,
-  },
-  standard: {
-    maxRevisionCycles: 2,
-    maxRepairAttempts: 1,
-    semanticReview: true,
-    contextWindow: 128_000,
-    draftMaxOutputTokens: 32_000,
-    reviewMaxOutputTokens: 24_000,
-    settlementMaxOutputTokens: 24_000,
-    planningMaxOutputTokens: 24_000,
-    logicalCallDeadlineMs: 900_000,
-    stepDeadlineMs: 1_200_000,
-    runDeadlineMs: 3_600_000,
-  },
-  deep: {
-    maxRevisionCycles: 3,
-    maxRepairAttempts: 2,
-    semanticReview: true,
-    contextWindow: 256_000,
-    draftMaxOutputTokens: 64_000,
-    reviewMaxOutputTokens: 32_000,
-    settlementMaxOutputTokens: 32_000,
-    planningMaxOutputTokens: 32_000,
-    logicalCallDeadlineMs: 1_800_000,
-    stepDeadlineMs: 2_400_000,
-    runDeadlineMs: 7_200_000,
-  },
-};
-
 export const EffectivePolicySchema = z.object({
-  qualityPreset: QualityPresetSchema,
   maxRevisionCycles: z.number().int().nonnegative(),
   semanticReview: z.boolean(),
   requestStartTimeoutMs: z.number().int().positive(),
@@ -116,11 +39,6 @@ export const EffectivePolicySchema = z.object({
   maxRetries: z.number().int().min(0).max(5),
   retryBaseDelayMs: z.number().int().positive(),
   maxRepairAttempts: z.number().int().min(0).max(3),
-  contextWindow: z.number().int().positive(),
-  draftMaxOutputTokens: z.number().int().positive(),
-  reviewMaxOutputTokens: z.number().int().positive(),
-  settlementMaxOutputTokens: z.number().int().positive(),
-  planningMaxOutputTokens: z.number().int().positive(),
   minChapterCharacters: z.number().int().positive(),
 });
 export type EffectivePolicy = z.infer<typeof EffectivePolicySchema>;
@@ -149,7 +67,7 @@ const BUILT_IN_DEFAULTS = {
   streamIdleTimeoutMs: 120_000,
   logicalCallDeadlineMs: 360_000,
   stepDeadlineMs: 480_000,
-  runDeadlineMs: 600_000,
+  runDeadlineMs: 3_600_000,
   // 每步最多 1+4=5 次尝试，与配方里的 maxAttempts=5 对齐。
   maxRetries: 4,
   retryBaseDelayMs: 1_000,
@@ -157,51 +75,18 @@ const BUILT_IN_DEFAULTS = {
   minChapterCharacters: 1_200,
 } as const;
 
-/**
- * Merges a partial policy input into a fully-resolved effective policy.
- * Merge order: built-in defaults ← qualityPreset expansion ← caller defaults
- * ← explicit input fields.
- */
+/** Resolve operational safeguards; model capacity belongs to model configuration. */
 export function resolveEffectivePolicy(
   input: ModelExecutionPolicy = {},
   defaults: ModelExecutionPolicy = {},
 ): ResolvedPolicy {
-  const warnings: PolicyWarning[] = [];
-  const qualityPreset =
-    input.qualityPreset ?? defaults.qualityPreset ?? "standard";
-  const preset = QUALITY_PRESETS[qualityPreset];
-
-  const merged: Record<string, unknown> = {
-    ...BUILT_IN_DEFAULTS,
-    ...preset,
-    ...definedFields(defaults),
-    ...definedFields(input),
-  };
-
-  // M5 baseline finding: reasoning models spend
-  // reasoning tokens inside the output budget; structured calls budgeted
-  // below ~1024 tokens truncate and fall into repair loops. Warn, don't
-  // reject — non-reasoning endpoints may legitimately use smaller budgets.
-  for (const field of [
-    "reviewMaxOutputTokens",
-    "settlementMaxOutputTokens",
-    "planningMaxOutputTokens",
-  ] as const) {
-    const value = merged[field];
-    if (typeof value === "number" && value < 1_024) {
-      warnings.push({
-        code: "policy.structured_budget_low",
-        message: `${field}=${value} is below 1024; reasoning models may truncate structured output and trigger repair loops.`,
-      });
-    }
-  }
-
   return {
-    effectivePolicy: {
-      qualityPreset,
-      ...(merged as Omit<EffectivePolicy, "qualityPreset">),
-    },
-    warnings,
+    effectivePolicy: EffectivePolicySchema.parse({
+      ...BUILT_IN_DEFAULTS,
+      ...definedFields(defaults),
+      ...definedFields(input),
+    }),
+    warnings: [],
   };
 }
 

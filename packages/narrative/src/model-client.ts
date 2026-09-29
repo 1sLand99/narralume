@@ -253,20 +253,27 @@ export class GatewayNarrativeModelClient implements NarrativeModelClient {
   }
 
   effectiveContextWindow(run: NarrativeRun, purpose: string): number {
-    const requested = positiveInteger(run.policy.contextWindow) ?? 64_000;
-    const role = modelRoleForPurpose(purpose);
-    const assigned = this.resolveRunAssignment(run, purpose, role);
-    if (!assigned?.model.contextWindow) return requested;
-    return Math.min(requested, assigned.model.contextWindow);
+    const assigned = this.resolveRunAssignment(
+      run,
+      purpose,
+      modelRoleForPurpose(purpose),
+    );
+    return verifiedExecutionLimits(
+      assigned?.model.contextWindow,
+      assigned?.model.maxOutputTokens,
+    ).contextWindow;
   }
 
   effectiveOutputLimit(run: NarrativeRun, purpose: string): number {
-    const role = modelRoleForPurpose(purpose);
-    const assigned = this.resolveRunAssignment(run, purpose, role);
-    const workLimit = roleOutputLimit(run, purpose) ?? 16_000;
-    return assigned?.model.maxOutputTokens
-      ? Math.min(workLimit, assigned.model.maxOutputTokens)
-      : workLimit;
+    const assigned = this.resolveRunAssignment(
+      run,
+      purpose,
+      modelRoleForPurpose(purpose),
+    );
+    return verifiedExecutionLimits(
+      assigned?.model.contextWindow,
+      assigned?.model.maxOutputTokens,
+    ).maxOutputTokens;
   }
 
   contextMaterializationKey(run: NarrativeRun, purpose: string): string {
@@ -1011,18 +1018,13 @@ interface AppliedModelRuntime extends Record<string, unknown> {
   protocol: ModelProtocol;
   providerId: string;
   contextWindow: number;
-  policyContextWindow: number;
   modelContextWindow: number;
   estimatedInputRawTokens: number;
   estimatedInputTokens: number;
   inputSafetyTokens: number;
-  contextWindowPolicySource: string;
-  contextWindowAppliedBy: "policy" | "model";
   requestedMaxOutputTokens: number | null;
-  roleMaxOutputTokens: number | null;
   modelMaxOutputTokens: number;
   maxOutputTokens: number;
-  roleMaxOutputTokensSource: string;
   maxOutputTokensAppliedBy: readonly string[];
   remainingContextTokens: number;
   modelMetadataSource: StoredModel["metadataSource"] | null;
@@ -1211,13 +1213,11 @@ function applyRuntimeRequest(
   request: ModelRequest,
   runtime: CandidateRuntime,
 ): ModelRequest {
-  const policyContextWindow =
-    positiveInteger(run.policy.contextWindow) ?? 64_000;
-  // Provider metadata is advisory. Unknown physical limits fall back to the
-  // bounded run policy instead of making an otherwise usable model
-  // unassignable.
-  const modelContextWindow = runtime.modelContextWindow ?? policyContextWindow;
-  const contextWindow = Math.min(policyContextWindow, modelContextWindow);
+  const { contextWindow, maxOutputTokens: modelMaxOutputTokens } =
+    verifiedExecutionLimits(
+      runtime.modelContextWindow,
+      runtime.modelMaxOutputTokens,
+    );
   const estimate = requestTokenEstimate(request, contextWindow);
   const remainingContextTokens =
     contextWindow - estimate.conservative - estimate.safety;
@@ -1235,15 +1235,10 @@ function applyRuntimeRequest(
     };
   }
 
-  const requested = positiveInteger(request.maxOutputTokens);
-  const rolePolicy = roleOutputLimit(run, purpose);
-  const outputCandidates = [
-    requested,
-    rolePolicy,
-    runtime.modelMaxOutputTokens,
+  const maxOutputTokens = Math.min(
+    modelMaxOutputTokens,
     remainingContextTokens,
-  ].filter((value): value is number => value !== null);
-  const maxOutputTokens = Math.max(1, Math.min(...outputCandidates));
+  );
   const sampling = mergedSampling(runtime.protocol, runtime.sampling, request);
   return {
     ...request,
@@ -1263,20 +1258,17 @@ function snapshotRuntime(
   } = {},
   requestedMaxOutputTokens: number | null = null,
 ): AppliedModelRuntime {
-  const policyContextWindow =
-    positiveInteger(run.policy.contextWindow) ?? 64_000;
-  const modelContextWindow = runtime.modelContextWindow ?? policyContextWindow;
-  const modelMaxOutputTokens =
-    runtime.modelMaxOutputTokens ?? request.maxOutputTokens!;
-  const contextWindow = Math.min(policyContextWindow, modelContextWindow);
+  const { contextWindow, maxOutputTokens: modelMaxOutputTokens } =
+    verifiedExecutionLimits(
+      runtime.modelContextWindow,
+      runtime.modelMaxOutputTokens,
+    );
+  const modelContextWindow = contextWindow;
   const estimate = requestTokenEstimate(request, contextWindow);
   const remainingContextTokens =
     contextWindow - estimate.conservative - estimate.safety;
   const finalOutputTokens = request.maxOutputTokens!;
-  const roleLimit = roleOutputLimit(run, purpose);
   const appliedBy = [
-    ...(requestedMaxOutputTokens === finalOutputTokens ? ["purpose"] : []),
-    ...(roleLimit === finalOutputTokens ? ["role-policy"] : []),
     ...(modelMaxOutputTokens === finalOutputTokens ? ["model"] : []),
     ...(remainingContextTokens === finalOutputTokens
       ? ["remaining-context"]
@@ -1286,22 +1278,13 @@ function snapshotRuntime(
     protocol: runtime.protocol,
     providerId: runtime.providerId,
     contextWindow,
-    policyContextWindow,
     modelContextWindow,
     estimatedInputRawTokens: estimate.raw,
     estimatedInputTokens: estimate.conservative,
     inputSafetyTokens: estimate.safety,
-    contextWindowPolicySource: policyFieldSource(run, "contextWindow"),
-    contextWindowAppliedBy:
-      modelContextWindow < policyContextWindow ? "model" : "policy",
     requestedMaxOutputTokens,
-    roleMaxOutputTokens: roleLimit,
     modelMaxOutputTokens,
     maxOutputTokens: finalOutputTokens,
-    roleMaxOutputTokensSource: policyFieldSource(
-      run,
-      roleOutputPolicyKey(purpose),
-    ),
     maxOutputTokensAppliedBy: appliedBy,
     remainingContextTokens,
     modelMetadataSource: runtime.metadataSource,
@@ -1436,21 +1419,19 @@ function tokenEstimateDetails(
   };
 }
 
-function roleOutputLimit(run: NarrativeRun, purpose: string): number | null {
-  return positiveInteger(run.policy[roleOutputPolicyKey(purpose)]);
-}
-
-function roleOutputPolicyKey(purpose: string): string {
-  const role = modelRoleForPurpose(purpose);
-  return role === "planning"
-    ? "planningMaxOutputTokens"
-    : role === "review"
-      ? "reviewMaxOutputTokens"
-      : role === "settlement"
-        ? "settlementMaxOutputTokens"
-        : role === "analysis"
-          ? "analysisMaxOutputTokens"
-          : "draftMaxOutputTokens";
+function verifiedExecutionLimits(
+  contextWindow: number | null | undefined,
+  maxOutputTokens: number | null | undefined,
+): { contextWindow: number; maxOutputTokens: number } {
+  if (!contextWindow || !maxOutputTokens) {
+    throw <RunStepError>{
+      code: "model.capacity_unknown",
+      message:
+        "Verify the provider model's context and output capacity in model settings before generation",
+      retryable: false,
+    };
+  }
+  return { contextWindow, maxOutputTokens };
 }
 
 function positiveInteger(value: unknown): number | null {
@@ -1679,7 +1660,7 @@ function modelStepError(error: unknown, cancelled: boolean): RunStepError {
         ? "model.structured_output_limit"
         : "model.structured_output",
       message: outputLimited
-        ? "Structured output still hit the model output/context limit after repair; raise the effective limit or shrink the input"
+        ? "Structured output reached the verified model output/context limit; reduce optional input or regenerate a smaller complete task"
         : error.message,
       // 校验失败是随机采样问题：随 StructuredOutputError 的可重试语义
       // 走 step 级退避重试；只有输出/上下文上限例外——重掷同样会撞上限。
@@ -1884,9 +1865,7 @@ function explicitPolicyFields(
 }
 
 function policyFieldSource(run: NarrativeRun, field: string): string {
-  return explicitPolicyFields(run.policy).has(field)
-    ? "run"
-    : `quality-preset:${String(run.policy.qualityPreset ?? "standard")}`;
+  return explicitPolicyFields(run.policy).has(field) ? "run" : "built-in";
 }
 
 interface RuntimeTimeoutPolicy {

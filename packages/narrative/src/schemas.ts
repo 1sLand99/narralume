@@ -50,19 +50,7 @@ const ReviewIssueSchema = z
     suggestedDirection: z.string().nullable(),
     requiresAuthorDecision: z.boolean(),
   })
-  .strict()
-  .superRefine((issue, context) => {
-    if (
-      issue.category === "goal" &&
-      !["major", "critical"].includes(issue.severity)
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["severity"],
-        message: "章节目标问题必须标记为 major 或 critical",
-      });
-    }
-  });
+  .strict();
 export const ReviewResultSchema = z
   .object({
     summary: z.string().min(1),
@@ -80,21 +68,6 @@ export type ReviewResult = z.infer<typeof ReviewResultSchema>;
 export type DerivedReviewResult = ReviewResult & {
   verdict: "pass" | "revise" | "block";
 };
-
-export function deriveReviewResult(review: ReviewResult): DerivedReviewResult {
-  const issues = review.issues.map((issue) => ({
-    ...issue,
-    requiresAuthorDecision:
-      ["major", "critical"].includes(issue.severity) &&
-      issue.requiresAuthorDecision,
-  }));
-  const verdict = issues.some((issue) => issue.requiresAuthorDecision)
-    ? "block"
-    : issues.some((issue) => ["major", "critical"].includes(issue.severity))
-      ? "revise"
-      : "pass";
-  return { ...review, issues, verdict };
-}
 
 const KnowledgeBeliefSchema = z.enum([
   "known",

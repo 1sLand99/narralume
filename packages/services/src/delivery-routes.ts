@@ -187,8 +187,6 @@ export function registerDeliveryRoutes(
             sourceText: input.text,
             creationRequestId: input.requestId,
             creationRequestHash: requestHash,
-            contextWindow: 32_000,
-            styleExtractMaxOutputTokens: 4_000,
             origin: {
               surface: "settings",
               documentId: null,
@@ -568,8 +566,6 @@ export function registerDeliveryRoutes(
             batchId,
             creationRequestId: input.requestId,
             creationRequestHash: requestHash,
-            contextWindow: 32_000,
-            analysisMaxOutputTokens: 16_000,
             importChunkCharacters,
             origin: {
               surface: "import",

@@ -1,4 +1,4 @@
-import { sha256Hex } from "@narralume/domain";
+import { selectReviewedCandidate } from "./revision-progress.js";
 import {
   outlineStructureFingerprint,
   requireCurrentChapterOutline,
@@ -6,11 +6,14 @@ import {
 
 import {
   ContextCompiler,
+  estimateTokens,
   type ContextCompileError,
   type ContextSource,
 } from "@narralume/context";
 import {
   createDocument,
+  selectedManuscriptArtifact,
+  sha256Hex,
   type CanonFact,
   type Document,
   type DocumentVersion,
@@ -43,6 +46,16 @@ import {
   type NarrativeDatabase,
 } from "@narralume/persistence";
 
+import {
+  EDITORIAL_CHECK_CONTRACT,
+  EDITORIAL_CHECK_INSTRUCTIONS,
+  EditorialCheckSchema,
+  applyEditorialCheck,
+  editorialCheckIndices,
+  selectEditorialSources,
+  validateEditorialCheck,
+  type EditorialSource,
+} from "./editorial-grounding.js";
 import type { NarrativeModelClient } from "./model-client.js";
 import {
   optionalEmbeddings,
@@ -61,6 +74,7 @@ import {
 } from "./settlement-application-service.js";
 import {
   authoredInstructions,
+  instructionsFor,
   promptLanguageOf,
   workCraftLayer,
 } from "./prompt-language.js";
@@ -73,7 +87,6 @@ import { StoryStatePacketBuilder } from "./story-state-packet.js";
 import {
   REVIEW_CONTRACT,
   ReviewResultSchema,
-  deriveReviewResult,
   SCENE_PLAN_CONTRACT,
   ScenePlanSchema,
   SETTLEMENT_CONTRACT,
@@ -197,10 +210,45 @@ export class ChapterWorkerSuite {
     return this.projects.get(projectId)?.language ?? null;
   }
 
+  /** Recompile optional history when the actual manuscript needs more input room. */
+  private async contextWithInput(
+    snapshot: RunSnapshot,
+    step: NarrativeRunStep,
+    signal: AbortSignal,
+    purpose: string,
+    extraInput: string,
+  ): Promise<Record<string, unknown>> {
+    const existing = requiredArtifact(snapshot, "context.compile");
+    const contextWindow =
+      this.model.effectiveContextWindow?.(snapshot.run, purpose) ?? 64_000;
+    const output =
+      this.model.effectiveOutputLimit?.(snapshot.run, purpose) ?? 16_000;
+    const estimated =
+      Math.ceil(
+        estimateTokens(purposeContextText(existing, purpose) + extraInput) *
+          1.12,
+      ) +
+      3_000 +
+      Math.max(1_024, Math.ceil(contextWindow * 0.02));
+    if (estimated + output <= contextWindow) return existing;
+    const rebuilt = await this.compileContext(snapshot, step, signal, {
+      purpose,
+      extraInput,
+    });
+    return {
+      ...existing,
+      contexts: {
+        ...(isRecord(existing.contexts) ? existing.contexts : {}),
+        ...(isRecord(rebuilt.output.contexts) ? rebuilt.output.contexts : {}),
+      },
+    };
+  }
+
   private async compileContext(
     snapshot: RunSnapshot,
     step: NarrativeRunStep,
     signal: AbortSignal,
+    materialization?: { purpose: string; extraInput: string },
   ): Promise<StepExecutionResult> {
     const run = snapshot.run;
     const project = this.projects.get(run.projectId);
@@ -563,11 +611,6 @@ export class ChapterWorkerSuite {
       });
     }
 
-    const requestedContextWindow = policyNumber(
-      run.policy,
-      "contextWindow",
-      128_000,
-    );
     const inventoryDigest = sha256(
       stableContextInventory([
         ...sources,
@@ -575,25 +618,13 @@ export class ChapterWorkerSuite {
         ...authorStoryStatePacket.sources,
       ]),
     );
-    const purposeRequests = {
-      "scene-plan": 3_000,
-      "chapter-draft": policyNumber(run.policy, "draftMaxOutputTokens", 32_000),
-      "semantic-review": policyNumber(
-        run.policy,
-        "reviewMaxOutputTokens",
-        24_000,
-      ),
-      "chapter-revision": policyNumber(
-        run.policy,
-        "draftMaxOutputTokens",
-        32_000,
-      ),
-      "chapter-settlement": policyNumber(
-        run.policy,
-        "settlementMaxOutputTokens",
-        24_000,
-      ),
-    } as const;
+    const purposes = [
+      "scene-plan",
+      "chapter-draft",
+      "semantic-review",
+      "chapter-revision",
+      "chapter-settlement",
+    ];
     const contexts: Record<
       string,
       {
@@ -606,7 +637,8 @@ export class ChapterWorkerSuite {
         inventoryDigest: string;
       }
     > = {};
-    for (const [purpose, purposeRequest] of Object.entries(purposeRequests)) {
+    for (const purpose of purposes) {
+      if (materialization && materialization.purpose !== purpose) continue;
       const statePacket = [
         "scene-plan",
         "semantic-review",
@@ -623,19 +655,23 @@ export class ChapterWorkerSuite {
         stableContextInventory(purposeSources),
       );
       const contextWindow =
-        this.model.effectiveContextWindow?.(run, purpose) ??
-        requestedContextWindow;
-      const outputReserve = Math.min(
-        purposeRequest,
-        this.model.effectiveOutputLimit?.(run, purpose) ?? purposeRequest,
-        Math.floor(contextWindow * 0.4),
-      );
+        this.model.effectiveContextWindow?.(run, purpose) ?? 64_000;
+      const outputReserve =
+        this.model.effectiveOutputLimit?.(run, purpose) ?? 16_000;
       const modelMaterializationKey =
         this.model.contextMaterializationKey?.(run, purpose) ?? "unresolved";
       const budget = {
         contextWindow,
         outputReserve,
-        fixedInstructionReserve: 1_500,
+        safetyReserve:
+          Math.ceil(contextWindow * 0.12) +
+          Math.max(1_024, Math.ceil(contextWindow * 0.02)) +
+          256,
+        fixedInstructionReserve:
+          1_500 +
+          (materialization
+            ? Math.ceil(estimateTokens(materialization.extraInput) * 1.12) + 256
+            : 0),
         toolReserve: purpose.includes("draft") ? 0 : 500,
         schemaReserve: purpose.includes("draft") ? 0 : 1_000,
       };
@@ -658,10 +694,10 @@ export class ChapterWorkerSuite {
       }
       const receipt = {
         ...compiled.receipt,
-        id: `${step.id}:receipt:${purpose}`,
+        id: `${step.id}:receipt:${purpose}${materialization ? `:${sha256(materialization.extraInput).slice(0, 16)}` : ""}`,
         inventoryDigest: purposeInventoryDigest,
         materializationDigest: sha256(
-          `${purposeInventoryDigest}\0${purpose}\0${contextWindow}\0${outputReserve}\0${modelMaterializationKey}`,
+          `${purposeInventoryDigest}\0${purpose}\0${JSON.stringify(budget)}\0${modelMaterializationKey}`,
         ),
         ...(queryEmbedding.degradation
           ? { degradations: [queryEmbedding.degradation] }
@@ -741,7 +777,6 @@ export class ChapterWorkerSuite {
             ].join("\n\n"),
           },
         ],
-        maxOutputTokens: 3_000,
         temperature: 0.65,
         reasoningEffort: "low",
       },
@@ -764,12 +799,18 @@ export class ChapterWorkerSuite {
     step: NarrativeRunStep,
     signal: AbortSignal,
   ): Promise<StepExecutionResult> {
-    const context = requiredArtifact(snapshot, "context.compile");
     const plan = requiredArtifact(snapshot, "scene.plan");
     // Set by POST /api/runs/:runId/streams/continue: the interrupted partial
     // becomes the chapter's existing beginning; the model only writes the
     // continuation and the final manuscript is prefix + generated part.
     const continuationPrefix = continuationPrefixOf(snapshot.run.policy);
+    const context = await this.contextWithInput(
+      snapshot,
+      step,
+      signal,
+      "chapter-draft",
+      JSON.stringify(plan) + (continuationPrefix ?? ""),
+    );
     const writingReference = chapterWritingReference(context);
     const result = await this.model.text(
       snapshot.run,
@@ -814,11 +855,6 @@ export class ChapterWorkerSuite {
             ].join("\n"),
           },
         ],
-        maxOutputTokens: policyNumber(
-          snapshot.run.policy,
-          "draftMaxOutputTokens",
-          8_000,
-        ),
         temperature: 0.82,
         reasoningEffort: "low",
       },
@@ -829,12 +865,12 @@ export class ChapterWorkerSuite {
       throw <RunStepError>{
         code: "draft.output_limit",
         message:
-          "The chapter manuscript hit the model output/context limit; generation can continue from the saved partial",
-        retryable: true,
+          "The chapter manuscript hit the model output/context limit; the partial is preserved; verify capacity before regenerating",
+        retryable: false,
         details: {
           finishReason: result.finishReason,
           partial: true,
-          recoveryActions: ["continue", "adopt", "regenerate"],
+          recoveryActions: ["regenerate"],
           partialCharacters: [...generated].length,
           partialHash: sha256(generated),
         },
@@ -982,7 +1018,7 @@ export class ChapterWorkerSuite {
   ): Promise<StepExecutionResult> {
     const documentReview = this.documentReviewTarget(snapshot);
     const content = documentReview?.content ?? finalContent(snapshot);
-    const context = requiredArtifact(snapshot, "context.compile");
+    let context = requiredArtifact(snapshot, "context.compile");
     const plan = documentReview
       ? {
           chapterTitle: documentReview.outlineNode.title,
@@ -1001,6 +1037,15 @@ export class ChapterWorkerSuite {
           documentVersionId: documentReview.version.id,
         })
       : this.paragraphLocator(snapshot.run.projectId, content, context);
+    context = await this.contextWithInput(
+      snapshot,
+      step,
+      signal,
+      "semantic-review",
+      locator.render() + JSON.stringify(plan),
+    );
+    const sourceBaseline = this.editorialSources(snapshot);
+    const sourceFingerprint = sha256(JSON.stringify(sourceBaseline));
     const result = await this.model.structured(
       snapshot.run,
       step,
@@ -1024,11 +1069,6 @@ export class ChapterWorkerSuite {
             ].join("\n"),
           },
         ],
-        maxOutputTokens: policyNumber(
-          snapshot.run.policy,
-          "reviewMaxOutputTokens",
-          16_000,
-        ),
         temperature: 0.2,
         reasoningEffort: "low",
       },
@@ -1038,10 +1078,72 @@ export class ChapterWorkerSuite {
       ),
       signal,
     );
-    const grounded = groundReviewEvidence(
-      deriveReviewResult(result.value),
-      locator,
-    );
+    const indices = editorialCheckIndices(result.value);
+    let checked = applyEditorialCheck(result.value, { findings: [] }, []);
+    let verificationUsage = zeroUsage();
+    if (indices.length) {
+      const baseline = sourceBaseline;
+      const sources = selectEditorialSources(
+        [
+          ...baseline,
+          {
+            id: "current-manuscript",
+            kind: "candidate",
+            content,
+            version: locator.contentHash,
+          },
+        ],
+        JSON.stringify(result.value.issues),
+        32_000,
+      );
+      const verified = await this.model.structured(
+        snapshot.run,
+        step,
+        "semantic-review-verification",
+        {
+          instructions: instructionsFor(
+            this.projectLanguage(snapshot.run.projectId),
+            EDITORIAL_CHECK_INSTRUCTIONS,
+          ),
+          messages: [
+            {
+              role: "user",
+              content: JSON.stringify({
+                findings: indices.map((issueIndex) => ({
+                  issueIndex,
+                  ...result.value.issues[issueIndex],
+                })),
+                sources,
+                retrieval: {
+                  completeHistory: false,
+                  note: "Selected original passages. Missing evidence is uncertainty, not contradiction.",
+                },
+                manuscript: content,
+              }),
+            },
+          ],
+          temperature: 0.1,
+          reasoningEffort: "low",
+        },
+        EDITORIAL_CHECK_CONTRACT,
+        zodValidator(EditorialCheckSchema, (value) =>
+          validateEditorialCheck(value, indices, sources, content),
+        ),
+        signal,
+      );
+      checked = applyEditorialCheck(result.value, verified.value, sources);
+      verificationUsage = verified.usage;
+    }
+    if (
+      sourceFingerprint !==
+      sha256(JSON.stringify(this.editorialSources(snapshot)))
+    ) {
+      throw permanent(
+        "review.source_changed",
+        "Author commitments or committed manuscripts changed during review; review again",
+      );
+    }
+    const grounded = groundReviewEvidence(checked, locator);
     const reportId = `${step.id}:report`;
     const persistedIssues = grounded.issues.map((issue, index) => ({
       ...issue,
@@ -1072,13 +1174,72 @@ export class ChapterWorkerSuite {
     return {
       artifactKind: "semantic-review",
       output: {
-        ...grounded,
-        issues: persistedIssues,
-        reportId,
-        generation: { mode: result.mode, attempts: result.attempts },
+        ...selectReviewedCandidate(snapshot, content, {
+          ...grounded,
+          sourceFingerprint,
+          issues: persistedIssues,
+          reportId,
+          generation: { mode: result.mode, attempts: result.attempts },
+        }),
       },
-      usage: result.usage,
+      usage: {
+        inputTokens: result.usage.inputTokens + verificationUsage.inputTokens,
+        outputTokens:
+          result.usage.outputTokens + verificationUsage.outputTokens,
+        calls: result.usage.calls + verificationUsage.calls,
+        costUsd: result.usage.costUsd + verificationUsage.costUsd,
+        wallTimeMs: result.usage.wallTimeMs + verificationUsage.wallTimeMs,
+      },
     };
+  }
+
+  private editorialSources(snapshot: RunSnapshot): EditorialSource[] {
+    const projectId = snapshot.run.projectId;
+    const sources: EditorialSource[] = [];
+    const add = (id: string, kind: EditorialSource["kind"], value: unknown) => {
+      if (!value) return;
+      const content = JSON.stringify(value);
+      sources.push({ id, kind, content, version: sha256(content) });
+    };
+    add("author-intent", "author", this.story.getAuthorIntent(projectId));
+    add("author-compass", "author", this.automation.getCompass(projectId));
+    add("author-steering", "author", snapshot.run.policy.steerNotes);
+    for (const fact of this.canon.listEffectiveFacts(projectId))
+      add(`fact:${fact.id}`, "canon", fact);
+    const outline = this.story.listOutline(projectId);
+    const targetIndex = outline.findIndex(
+      (node) => node.id === snapshot.run.targetOutlineNodeId,
+    );
+    for (const node of outline.slice(
+      0,
+      targetIndex < 0 ? undefined : targetIndex,
+    )) {
+      if (node.kind !== "chapter" || node.status !== "committed") continue;
+      const document = this.documents.getByOutlineNodeId(projectId, node.id);
+      const version = document?.currentVersionId
+        ? this.documents.getVersion(
+            projectId,
+            document.id,
+            document.currentVersionId,
+          )
+        : null;
+      if (version)
+        sources.push({
+          id: `manuscript:${document!.id}`,
+          kind: "manuscript",
+          content: version.content,
+          version: version.id,
+          title: node.title,
+          chapterNumber:
+            outline
+              .filter(
+                (item) =>
+                  item.kind === "chapter" && item.status !== "abandoned",
+              )
+              .findIndex((item) => item.id === node.id) + 1,
+        });
+    }
+    return sources;
   }
 
   private async generateRevision(
@@ -1112,7 +1273,13 @@ export class ChapterWorkerSuite {
           source: "author_revision_request",
         }
       : latestGateArtifact(snapshot);
-    const context = requiredArtifact(snapshot, "context.compile");
+    const context = await this.contextWithInput(
+      snapshot,
+      step,
+      signal,
+      "chapter-revision",
+      baseContent + JSON.stringify(review),
+    );
     const result = await this.model.text(
       snapshot.run,
       step,
@@ -1138,11 +1305,6 @@ export class ChapterWorkerSuite {
             ].join("\n"),
           },
         ],
-        maxOutputTokens: policyNumber(
-          snapshot.run.policy,
-          "draftMaxOutputTokens",
-          8_000,
-        ),
         temperature: 0.55,
         reasoningEffort: "low",
       },
@@ -1154,7 +1316,7 @@ export class ChapterWorkerSuite {
         code: "revision.output_limit",
         message:
           "The full revision hit the model output/context limit; truncated text cannot be promoted to a new manuscript",
-        retryable: true,
+        retryable: false,
         details: {
           finishReason: result.finishReason,
           partial: true,
@@ -1274,7 +1436,7 @@ export class ChapterWorkerSuite {
           content,
           requiredArtifact(snapshot, "context.compile"),
         );
-    const authoritative = manual
+    let authoritative = manual
       ? this.manualSettlementContext(
           snapshot.run.projectId,
           manual.outlineNode.id,
@@ -1310,6 +1472,17 @@ export class ChapterWorkerSuite {
         this.story.listOutline(snapshot.run.projectId).map((node) => node.id),
       ),
     };
+    if (!manual)
+      authoritative = purposeContextText(
+        await this.contextWithInput(
+          snapshot,
+          step,
+          signal,
+          "chapter-settlement",
+          locator.render() + JSON.stringify(entities),
+        ),
+        "chapter-settlement",
+      );
     const result = await this.model.structured(
       snapshot.run,
       step,
@@ -1331,11 +1504,6 @@ export class ChapterWorkerSuite {
             ].join("\n"),
           },
         ],
-        maxOutputTokens: policyNumber(
-          snapshot.run.policy,
-          "settlementMaxOutputTokens",
-          16_000,
-        ),
         temperature: 0.15,
         reasoningEffort: "low",
       },
@@ -1913,14 +2081,8 @@ function latestGateArtifact(snapshot: RunSnapshot): Record<string, unknown> {
 }
 
 function finalContent(snapshot: RunSnapshot): string {
-  const output = [...snapshot.steps]
-    .reverse()
-    .find(
-      (step) =>
-        step.status === "succeeded" &&
-        (step.kind === "revision.generate" || step.kind === "draft.generate"),
-    )?.outputArtifact;
-  return output ? stringField(output, "content") : "";
+  const output = selectedManuscriptArtifact(snapshot);
+  return typeof output?.content === "string" ? output.content : "";
 }
 
 function reviewSemanticIssues(
@@ -1939,10 +2101,14 @@ function reviewSemanticIssues(
   return issues;
 }
 
-function groundReviewEvidence(
-  review: DerivedReviewResult,
+function groundReviewEvidence<T extends DerivedReviewResult>(
+  review: T,
   locator: ParagraphLocator,
-): GroundedReviewResult {
+): Omit<T, "issues"> & {
+  issues: Array<
+    T["issues"][number] & { evidence: GroundedParagraphEvidence[] }
+  >;
+} {
   return {
     ...review,
     issues: review.issues.map((issue) => {
@@ -2205,14 +2371,6 @@ function groundSettlementEvidence(
     })),
   };
 }
-
-type GroundedReviewResult = Omit<DerivedReviewResult, "issues"> & {
-  issues: Array<
-    DerivedReviewResult["issues"][number] & {
-      evidence: GroundedParagraphEvidence[];
-    }
-  >;
-};
 
 function locateEvidence(
   locator: ParagraphLocator,

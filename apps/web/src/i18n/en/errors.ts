@@ -47,6 +47,8 @@ export const errors: typeof errorsZh = {
     routeNotFound: "The API endpoint does not exist.",
   },
   message: {
+    modelCapacityUnknown: "Model capacity is unverified. Verify context and output capacity in model settings.",
+    reviewSourceChanged: "Author commitments or manuscripts changed during verification. Run the review again.",
     storyLineProposalIndividualRequired: "Review and decide each proposal in Story lines.",
     storyLineProposalNotFound: "This story line proposal is unavailable. Refresh to check.",
     storyLineProposalDecisionConflict: "This proposal already has a different decision. Refresh to view it.",

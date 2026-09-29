@@ -33,6 +33,8 @@ export const errors = {
   },
   /* 主文案：键为后端错误码的 camelCase 形式；ApiError 命中即用本地化文案。 */
   message: {
+    modelCapacityUnknown: "模型容量尚未核实，请在模型设置中核实上下文与输出能力。",
+    reviewSourceChanged: "核对期间作者约束或正文已更新，请重新审稿。",
     storyLineProposalIndividualRequired: "请到长期故事线逐项核对并裁定此建议。",
     storyLineProposalNotFound: "此故事线建议已不可用，请刷新。",
     storyLineProposalDecisionConflict: "此建议已有不同的裁定，请刷新查看。",

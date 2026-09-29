@@ -198,12 +198,8 @@ try {
         maxRetries: 1,
         // 小模型审稿引文需要多一轮带反馈的修复机会（M6 实测）
         maxRepairAttempts: 2,
-        contextWindow: 128_000,
         // 推理模型会将 reasoning token 计入输出预算；
         // 结构化/修订调用预算过低会截断 JSON（M5 基线发现）。
-        draftMaxOutputTokens: 32_000,
-        reviewMaxOutputTokens: 24_000,
-        settlementMaxOutputTokens: 24_000,
         minChapterCharacters: 180,
       }).effectivePolicy,
       steps: recipe.steps,

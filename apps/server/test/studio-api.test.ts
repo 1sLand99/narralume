@@ -154,15 +154,13 @@ describe("studio API", () => {
         personaId: observer.id,
         content: "潮声旁白，沈砚把姐姐的空白信放到煤油灯上。",
         generateReply: true,
-        policy: { maxRetries: 2, contextWindow: 16_000 },
+        policy: { maxRetries: 2 },
       },
       202,
     );
     // The request policy is resolved into the persisted run.policy.
     expect(posted.run.policy).toMatchObject({
       maxRetries: 2,
-      contextWindow: 16_000,
-      qualityPreset: "standard",
       speakerPersonaId: narrator.id,
       speakerSelectionReason: "mention",
     });
@@ -182,7 +180,7 @@ describe("studio API", () => {
         personaId: observer.id,
         content: "潮声旁白，沈砚把姐姐的空白信放到煤油灯上。",
         generateReply: true,
-        policy: { maxRetries: 2, contextWindow: 16_000 },
+        policy: { maxRetries: 2 },
       },
       202,
     );
@@ -501,7 +499,6 @@ describe("studio API", () => {
     );
     expect(editRun.run.policy).toMatchObject({
       maxRetries: 0,
-      qualityPreset: "standard",
     });
     expect(editRun.origin).toEqual({
       surface: "writing",

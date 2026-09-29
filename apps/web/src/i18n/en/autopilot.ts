@@ -119,10 +119,6 @@ export const autopilot: typeof autopilotZh = {
     planningConfirm: "Confirm each chapter plan first",
     windowSize: "Chapters planned ahead",
     maxRevisionCycles: "Max automatic revisions",
-    qualityPreset: "Generation quality",
-    qualityFast: "Fast",
-    qualityStandard: "Standard",
-    qualityDeep: "Deep",
     submitPending: "Starting…",
     submit: "Start AI quick creation",
     needCompassHint:

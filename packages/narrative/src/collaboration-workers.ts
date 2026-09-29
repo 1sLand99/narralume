@@ -611,14 +611,12 @@ export class CollaborationWorkerSuite {
           this.model.effectiveContextWindow?.(
             snapshot.run,
             "cocreate-response",
-          ) ?? policyNumber(snapshot.run.policy, "contextWindow", 32_000),
-        outputReserve: Math.min(
-          policyNumber(snapshot.run.policy, "replyMaxOutputTokens", 3_000),
+          ) ?? 64_000,
+        outputReserve:
           this.model.effectiveOutputLimit?.(
             snapshot.run,
             "cocreate-response",
-          ) ?? 3_000,
-        ),
+          ) ?? 16_000,
         fixedInstructionReserve: 1_200,
         toolReserve: 0,
         schemaReserve: 800,
@@ -729,11 +727,6 @@ export class CollaborationWorkerSuite {
         ),
         messages: [{ role: "user", content: stringField(context, "context") }],
         reasoningEffort: "low",
-        maxOutputTokens: policyNumber(
-          snapshot.run.policy,
-          "replyMaxOutputTokens",
-          3_000,
-        ),
       },
       COCREATE_RESPONSE_CONTRACT,
       collaborationValidator(CoCreateResponseSchema, (value) => {
@@ -899,11 +892,6 @@ export class CollaborationWorkerSuite {
           },
         ],
         reasoningEffort: "low",
-        maxOutputTokens: policyNumber(
-          snapshot.run.policy,
-          "adoptionMaxOutputTokens",
-          8_000,
-        ),
       },
       ADOPTION_RESULT_CONTRACT,
       collaborationValidator(AdoptionResultSchema, (value) => {
@@ -1246,11 +1234,6 @@ export class CollaborationWorkerSuite {
           },
         ],
         reasoningEffort: "low",
-        maxOutputTokens: policyNumber(
-          snapshot.run.policy,
-          "editMaxOutputTokens",
-          4_000,
-        ),
       },
       SELECTION_EDIT_CONTRACT,
       collaborationValidator(SelectionEditResultSchema),

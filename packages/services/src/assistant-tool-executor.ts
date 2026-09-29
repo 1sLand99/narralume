@@ -458,7 +458,6 @@ export class AssistantToolExecutor {
           {
             canonSpread: spread,
             canonInstruction: instruction,
-            canonMaxOutputTokens: 6_000,
             origin: {
               ...runOrigin(activity.origin),
               surface: activity.origin?.surface ?? "bible",
@@ -562,7 +561,6 @@ export class AssistantToolExecutor {
             selectionStart,
             selectionEnd,
             instruction,
-            editMaxOutputTokens: 4_000,
             origin: {
               surface: activity.origin?.surface ?? "assistant",
               documentId,

@@ -201,11 +201,6 @@ export class CanonCandidateWorkerSuite {
         ),
         messages: [{ role: "user", content: context.prompt }],
         reasoningEffort: "medium",
-        maxOutputTokens: policyNumber(
-          snapshot.run.policy,
-          "canonMaxOutputTokens",
-          6_000,
-        ),
       },
       CANON_CANDIDATE_MODEL_CONTRACT,
       canonCandidateModelValidator((value) =>
@@ -310,15 +305,6 @@ function policyString(
   if (typeof value !== "string" || !value.trim())
     throw permanent("policy.value.invalid", `Run policy is missing ${key}`);
   return value;
-}
-
-function policyNumber(
-  policy: Readonly<Record<string, unknown>>,
-  key: string,
-  fallback: number,
-): number {
-  const value = policy[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function stringField(

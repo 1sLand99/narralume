@@ -347,14 +347,8 @@ export class AssistantWorkerSuite {
       requiredArtifact(snapshot, "assistant.context"),
     );
     /* 思考档来自对话设置（可选 policy 字段）：off=不发送参数让模型自决，
-       未设置时保持旧默认 low。思考 token 会吃输出预算，档位越高输出上限同步抬高。 */
+       未设置时保持旧默认 low。推理与可见回复统一使用已配置的模型容量。 */
     const effort = snapshot.run.policy.assistantReasoningEffort;
-    const effortCeiling: Record<"off" | "low" | "medium" | "high", number> = {
-      off: 8_000,
-      low: 8_000,
-      medium: 16_000,
-      high: 24_000,
-    };
     const effectiveEffort =
       effort === "off" ||
       effort === "low" ||
@@ -396,10 +390,6 @@ export class AssistantWorkerSuite {
         ...(effectiveEffort === "off"
           ? {}
           : { reasoningEffort: effectiveEffort }),
-        maxOutputTokens: Math.max(
-          policyNumber(snapshot.run.policy, "assistantMaxOutputTokens", 3_000),
-          effortCeiling[effectiveEffort],
-        ),
       },
       ASSISTANT_REPLY_CONTRACT,
       assistantReplyValidator((reply) => validateToolCall(reply, context)),
@@ -602,15 +592,6 @@ function policyString(
     throw permanent("policy.value.invalid", `Run policy is missing ${key}`);
   }
   return value;
-}
-
-function policyNumber(
-  policy: Readonly<Record<string, unknown>>,
-  key: string,
-  fallback: number,
-): number {
-  const value = policy[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function policyToolDescriptors(

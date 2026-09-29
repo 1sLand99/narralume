@@ -149,7 +149,7 @@ describe("GatewayNarrativeModelClient B1 assignment runtime", () => {
       "chapter-draft",
       {
         messages: [{ role: "user", content: "继续" }],
-        maxOutputTokens: 64_000,
+        maxOutputTokens: 3_000,
       },
       new AbortController().signal,
     );
@@ -175,13 +175,10 @@ describe("GatewayNarrativeModelClient B1 assignment runtime", () => {
       credentialRef: "••••3456",
     });
     expect(JSON.parse(snapshot.applied_json)).toMatchObject({
-      policyContextWindow: 128_000,
       modelContextWindow: 128_000,
       modelMaxOutputTokens: 32_000,
       maxOutputTokens: 32_000,
-      contextWindowPolicySource: "quality-preset:standard",
-      contextWindowAppliedBy: "policy",
-      maxOutputTokensAppliedBy: ["role-policy", "model"],
+      maxOutputTokensAppliedBy: ["model"],
       modelMetadataSource: "manual",
       timeoutPolicy: {
         requestStartTimeoutMs: { value: 120_000, source: "built-in" },
@@ -214,7 +211,7 @@ describe("GatewayNarrativeModelClient B1 assignment runtime", () => {
     database.close();
   });
 
-  it("uses bounded policy defaults when physical model limits are unknown", async () => {
+  it("rejects unknown physical capacity before sending a request", async () => {
     const database = new NodeNarrativeDatabase();
     database.migrate();
     seedAssignment(database, {
@@ -236,19 +233,20 @@ describe("GatewayNarrativeModelClient B1 assignment runtime", () => {
       }),
     );
 
-    const result = await new GatewayNarrativeModelClient(database, {}).text(
-      runs.getRun("run-unknown-limits")!,
-      step,
-      "chapter-draft",
-      {
-        messages: [{ role: "user", content: "继续" }],
-        maxOutputTokens: 20_000,
-      },
-      new AbortController().signal,
-    );
+    await expect(
+      new GatewayNarrativeModelClient(database, {}).text(
+        runs.getRun("run-unknown-limits")!,
+        step,
+        "chapter-draft",
+        {
+          messages: [{ role: "user", content: "继续" }],
+          maxOutputTokens: 20_000,
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "model.capacity_unknown" });
 
-    expect(result.text).toBe("未知上限仍可调用");
-    expect(requests[0]).toMatchObject({ max_tokens: 12_000 });
+    expect(requests).toHaveLength(0);
     database.close();
   });
 
@@ -256,26 +254,29 @@ describe("GatewayNarrativeModelClient B1 assignment runtime", () => {
     [32_000, 32_000],
     [128_000, 128_000],
     [256_000, 256_000],
-    [1_000_000, 256_000],
-  ])("clamps a %i model to the policy work window %i", (physical, expected) => {
-    const database = new NodeNarrativeDatabase();
-    database.migrate();
-    seedAssignment(database, {
-      contextWindow: physical,
-      maxOutputTokens: 64_000,
-    });
-    const { runs } = createRun(database, `run-context-${physical}`, {
-      contextWindow: 256_000,
-    });
-    const client = new GatewayNarrativeModelClient(database, {});
-    expect(
-      client.effectiveContextWindow(
-        runs.getRun(`run-context-${physical}`)!,
-        "chapter-draft",
-      ),
-    ).toBe(expected);
-    database.close();
-  });
+    [1_000_000, 1_000_000],
+  ])(
+    "uses the configured %i physical context window %i",
+    (physical, expected) => {
+      const database = new NodeNarrativeDatabase();
+      database.migrate();
+      seedAssignment(database, {
+        contextWindow: physical,
+        maxOutputTokens: 64_000,
+      });
+      const { runs } = createRun(database, `run-context-${physical}`, {
+        contextWindow: 256_000,
+      });
+      const client = new GatewayNarrativeModelClient(database, {});
+      expect(
+        client.effectiveContextWindow(
+          runs.getRun(`run-context-${physical}`)!,
+          "chapter-draft",
+        ),
+      ).toBe(expected);
+      database.close();
+    },
+  );
 
   it("uses a 1M model window when the run explicitly requests 1M", () => {
     const database = new NodeNarrativeDatabase();

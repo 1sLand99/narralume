@@ -41,6 +41,39 @@ describe("chapter recipe", () => {
 });
 
 describe("routeRun", () => {
+  it("never settles a confirmed hard conflict when revisions are exhausted", () => {
+    const snapshot = makeSnapshot(0);
+    const gate = snapshot.steps.find(
+      (step) => step.kind === "semantic.review",
+    )!;
+    succeedThrough(snapshot, gate.id);
+    gate.outputArtifact = {
+      verdict: "revise",
+      issues: [{ severity: "major", hardConflict: true }],
+    };
+    expect(routeRun(snapshot)).toMatchObject({
+      type: "await_user",
+      reason: "factual_repair_unresolved",
+    });
+  });
+
+  it("stops unproductive optional editing without asking the author for a direction", () => {
+    const snapshot = makeSnapshot(2);
+    const gate = snapshot.steps.find(
+      (step) => step.kind === "semantic.review",
+    )!;
+    succeedThrough(snapshot, gate.id);
+    gate.outputArtifact = {
+      verdict: "revise",
+      stopEditing: true,
+      issues: [{ severity: "major", hardConflict: false }],
+    };
+    expect(routeRun(snapshot)).toMatchObject({
+      type: "skip_steps",
+      reason: "editorial_no_progress",
+    });
+  });
+
   it("routes the first pending step and honors cancellation before work", () => {
     const snapshot = makeSnapshot(1);
     expect(routeRun(snapshot)).toEqual({

@@ -1069,7 +1069,6 @@ export function registerStudioRoutes(
               title: input.title,
               creationRequestId: input.requestId,
               creationRequestHash: requestHash,
-              adoptionMaxOutputTokens: 8_000,
               origin: {
                 surface: "cocreate",
                 documentId: null,

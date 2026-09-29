@@ -1,3 +1,4 @@
+import { selectedManuscriptArtifact } from "@narralume/domain";
 import {
   EffectivePolicySchema,
   MIN_VIABLE_PARTIAL_CHARACTERS,
@@ -70,6 +71,7 @@ export function runProductProjection(
       availableActions = ["cancel"];
     } else if (
       [
+        "factual_repair_unresolved",
         "critical_review_unresolved",
         "quality_gate_blocked",
         "semantic_review_blocked",
@@ -115,8 +117,7 @@ export function runProductProjection(
       : null,
     result: {
       planCandidate: succeeded("scene.plan"),
-      manuscriptCandidate:
-        succeeded("revision.generate") ?? succeeded("draft.generate"),
+      manuscriptCandidate: selectedManuscriptArtifact(snapshot),
       reviewSummary: succeeded("semantic.review"),
       settlementCandidate: settlement,
       canonChangeSetId:
@@ -188,8 +189,7 @@ export function hasWritingAssignment(
 /**
  * Builds the persisted run.policy: known ModelExecutionPolicy fields are
  * split out and fully resolved via resolveEffectivePolicy, everything else
- * (chapterApproved, sessionId, recipe-specific knobs like
- * replyMaxOutputTokens, …) is kept as runtime metadata alongside the
+ * (chapterApproved, sessionId, recipe-specific metadata) is kept as runtime metadata alongside the
  * effective policy. explicitPolicyFields preserves which values the caller
  * actually supplied so provider timeout defaults are not shadowed by policy
  * defaults during dispatch.

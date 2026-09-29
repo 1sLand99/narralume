@@ -286,7 +286,6 @@ export function registerAssistantRoutes(
           assistantUserMessageId: messageId,
           assistantContext: input.context,
           assistantTools: ASSISTANT_TOOL_REGISTRY,
-          assistantMaxOutputTokens: 3_000,
           ...(conversation.settings.modelId
             ? { assistantModelId: conversation.settings.modelId }
             : {}),

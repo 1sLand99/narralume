@@ -158,6 +158,34 @@ export function routeRun(
     }
   }
 
+  if (
+    next.kind === "revision.generate" &&
+    !next.id.endsWith(":revise:requested")
+  ) {
+    const previous = latestSucceededGate(steps);
+    if (
+      previous?.outputArtifact?.stopEditing === true &&
+      gateVerdict(previous) !== "block"
+    ) {
+      if (gateHasHardConflict(previous))
+        return {
+          type: "await_user",
+          reason: "factual_repair_unresolved",
+          stepId: previous.id,
+        };
+      return {
+        type: "skip_steps",
+        stepIds: steps
+          .filter(
+            (step) =>
+              step.status === "pending" && step.ordinal < settleOrdinal(steps),
+          )
+          .map((step) => step.id),
+        reason: "editorial_no_progress",
+      };
+    }
+  }
+
   if (next.kind === "revision.generate") {
     if (
       run.recipe === "chapter-candidate-revision" &&
@@ -217,6 +245,7 @@ export function routeRun(
     if (verdict !== "pass" && !reviewBlockOverridden(run, gate)) {
       const canCommitForReview =
         verdict === "revise" &&
+        !gateHasHardConflict(gate) &&
         !gateHasCriticalIssue(gate) &&
         (run.mode === "autopilot" || run.mode === "chapter-gate");
       if (canCommitForReview) {
@@ -224,8 +253,9 @@ export function routeRun(
       }
       return {
         type: "await_user",
-        reason:
-          verdict === "revise" && gateHasCriticalIssue(gate)
+        reason: gateHasHardConflict(gate)
+          ? "factual_repair_unresolved"
+          : verdict === "revise" && gateHasCriticalIssue(gate)
             ? "critical_review_unresolved"
             : verdict === "revise"
               ? "revision_limit_reached"
@@ -376,6 +406,21 @@ function gateVerdict(
   return verdict === "pass" || verdict === "revise" || verdict === "block"
     ? verdict
     : null;
+}
+
+function gateHasHardConflict(step: NarrativeRunStep | undefined): boolean {
+  if (step?.kind === "deterministic.check" && gateVerdict(step) === "revise")
+    return true;
+  const issues = step?.outputArtifact?.issues;
+  return (
+    Array.isArray(issues) &&
+    issues.some(
+      (issue) =>
+        issue &&
+        typeof issue === "object" &&
+        (issue as Record<string, unknown>).hardConflict === true,
+    )
+  );
 }
 
 function gateHasCriticalIssue(step: NarrativeRunStep | undefined): boolean {

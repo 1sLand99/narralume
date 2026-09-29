@@ -712,7 +712,7 @@ function CreateDialog({
             tone: null,
             ...AUTOMATION_DEFAULTS,
           },
-          policy: { qualityPreset: "standard" as const },
+          policy: {},
         };
         const identity = JSON.stringify(request);
         if (aiRequestRef.current?.identity !== identity) {

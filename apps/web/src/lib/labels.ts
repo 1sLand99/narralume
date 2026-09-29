@@ -13,7 +13,6 @@ import type {
   OutlineNode,
   Project,
   ProjectQualityReport,
-  QualityPreset,
   ReviewIssueDecisionAction,
   ReviewRevisionProposal,
   ReviewWorkspaceIssue,
@@ -172,14 +171,6 @@ export function metadataSourceLabel(
   return translate(getLocale(), keys[source]);
 }
 
-export function qualityPresetLabel(preset: QualityPreset): string {
-  const keys: Record<QualityPreset, MessageKey> = {
-    fast: "labels.qualityPreset.fast",
-    standard: "labels.qualityPreset.standard",
-    deep: "labels.qualityPreset.deep",
-  };
-  return translate(getLocale(), keys[preset]);
-}
 
 export function probeStageLabel(
   stage: "text" | "stream" | "tool" | "structured-output",
@@ -629,6 +620,7 @@ export function stopReasonLabel(reason: string): string {
   const keys: Record<string, MessageKey> = {
     chapter_commit_approval_required:
       "labels.stopReason.chapterCommitApprovalRequired",
+    factual_repair_unresolved: "labels.stopReason.factualRepairUnresolved",
     critical_review_unresolved: "labels.stopReason.criticalReviewUnresolved",
     quality_gate_blocked: "labels.stopReason.qualityGateBlocked",
     semantic_review_blocked: "labels.stopReason.semanticReviewBlocked",

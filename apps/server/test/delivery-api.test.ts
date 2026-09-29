@@ -355,7 +355,6 @@ describe("delivery API", () => {
     expect(analysis.run.policy).toMatchObject({
       maxRetries: 0,
       minChapterCharacters: 500,
-      qualityPreset: "standard",
     });
     const analysisReplay = await app.inject({
       method: "POST",

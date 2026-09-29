@@ -1,3 +1,4 @@
+import { selectedManuscriptArtifact } from "@narralume/domain";
 import type { RunSnapshot } from "@narralume/domain";
 import { requireCurrentChapterOutline } from "@narralume/narrative";
 import { buildRequestedRevisionRecipe } from "@narralume/harness";
@@ -60,6 +61,7 @@ export function requestManuscriptRevision(
     source.run.status !== "awaiting_user" ||
     ![
       "chapter_commit_approval_required",
+      "factual_repair_unresolved",
       "critical_review_unresolved",
       "quality_gate_blocked",
       "semantic_review_blocked",
@@ -150,12 +152,6 @@ function requestedRevisionRunId(
 }
 
 function manuscriptContent(snapshot: RunSnapshot): string {
-  const output = [...snapshot.steps]
-    .reverse()
-    .find(
-      (step) =>
-        step.status === "succeeded" &&
-        (step.kind === "revision.generate" || step.kind === "draft.generate"),
-    )?.outputArtifact;
+  const output = selectedManuscriptArtifact(snapshot);
   return typeof output?.content === "string" ? output.content.trim() : "";
 }

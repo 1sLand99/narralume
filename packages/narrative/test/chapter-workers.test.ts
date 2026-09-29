@@ -129,6 +129,114 @@ beforeEach(() => {
 afterEach(() => database.close());
 
 describe("ChapterWorkerSuite", () => {
+  it("recompiles optional context around the actual manuscript while preserving required author constraints", async () => {
+    const manuscript =
+      "雾从海面推上石阶。林昼把手按在冰冷的门上。灯灭的一刻，父亲忽然问她为何对着空椅子说话。";
+    const model = scriptedModel(manuscript);
+    model.effectiveContextWindow = () => 16_000;
+    model.effectiveOutputLimit = () => 4_000;
+    const original = model.structured;
+    const seen: string[] = [];
+    model.structured = async (...args) => {
+      if (args[2] === "semantic-review") seen.push(JSON.stringify(args[3]));
+      return original(...args);
+    };
+    const recipe = buildChapterRecipe("run-context-room", 1);
+    runs.create({
+      id: "run-context-room",
+      projectId: "p1",
+      recipe: recipe.name,
+      recipeVersion: recipe.version,
+      mode: "autopilot",
+      targetOutlineNodeId: chapterId,
+      policy: { minChapterCharacters: 20 },
+      steps: recipe.steps,
+      now,
+    });
+    const suite = new ChapterWorkerSuite(database, model, () => new Date(now));
+    const supervisor = new HarnessSupervisor(runs, suite.registry(), {
+      now: () => new Date(now),
+    });
+    for (let i = 0; i < 8; i++) {
+      const snapshot = runs.getSnapshot("run-context-room");
+      if (
+        snapshot.steps.find((s) => s.kind === "deterministic.check")?.status ===
+        "succeeded"
+      )
+        break;
+      await supervisor.processNext("worker-test");
+    }
+    const snapshot = runs.getSnapshot("run-context-room");
+    const context = snapshot.steps.find(
+      (s) => s.kind === "context.compile",
+    )!.outputArtifact!;
+    const contexts = context.contexts as Record<
+      string,
+      Record<string, unknown>
+    >;
+    contexts["semantic-review"]!.text = "irrelevant-history ".repeat(20_000);
+    const step = snapshot.steps.find((s) => s.kind === "semantic.review")!;
+    const reviewer = suite.registry()["semantic.review"]!;
+    await reviewer.execute(snapshot, step, new AbortController().signal);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).not.toContain("irrelevant-history");
+    expect(seen[0]).toContain("不使用廉价失忆反转");
+    expect(seen[0]).toContain(manuscript);
+    const receipts = new SqliteContextReceiptRepository(database).list("p1");
+    expect(
+      receipts.some((r) =>
+        r.id.startsWith(`${step.id}:receipt:semantic-review:`),
+      ),
+    ).toBe(true);
+  });
+
+  it("invalidates evidence when the author changes commitments during targeted verification", async () => {
+    const manuscript =
+      "雾从海面推上石阶。林昼把手按在冰冷的门上。\n\n灯灭的一刻，父亲忽然问她为何对着空椅子说话。";
+    const model = scriptedModel(manuscript, { reviewVerdicts: ["revise"] });
+    const original = model.structured;
+    model.structured = async (...args) => {
+      const result = await original(...args);
+      if (args[2] === "semantic-review-verification") {
+        const story = new SqliteStoryRepository(database);
+        story.upsertAuthorIntent({
+          ...story.getAuthorIntent("p1")!,
+          promise: "作者更新了承诺。",
+          updatedAt: "2026-08-10T00:00:01.000Z",
+        });
+      }
+      return result;
+    };
+    const recipe = buildChapterRecipe("run-changed-evidence", 1);
+    runs.create({
+      id: "run-changed-evidence",
+      projectId: "p1",
+      recipe: recipe.name,
+      recipeVersion: recipe.version,
+      mode: "autopilot",
+      targetOutlineNodeId: chapterId,
+      policy: { minChapterCharacters: 20 },
+      steps: recipe.steps,
+      now,
+    });
+    const supervisor = new HarnessSupervisor(
+      runs,
+      new ChapterWorkerSuite(database, model, () => new Date(now)).registry(),
+      { now: () => new Date(now) },
+    );
+    for (let index = 0; index < 20; index++)
+      await supervisor.processNext("evidence-change-test");
+    const snapshot = runs.getSnapshot("run-changed-evidence");
+    expect(snapshot.run.status).toBe("failed");
+    expect(
+      snapshot.steps.find((step) => step.kind === "semantic.review")?.error
+        ?.code,
+    ).toBe("review.source_changed");
+    expect(
+      snapshot.steps.find((step) => step.kind === "chapter.commit")?.status,
+    ).toBe("pending");
+  });
+
   it("checks the order again after asynchronous indexing and lets a fresh run use the new order", async () => {
     const story = new SqliteStoryRepository(database);
     const root = story.requireOutlineNode("p1", "book");
@@ -468,7 +576,7 @@ describe("ChapterWorkerSuite", () => {
     });
   });
 
-  it("turns a length-limited draft into an explicit recoverable partial", async () => {
+  it("preserves a length-limited draft without retrying identical capacity", async () => {
     const model = scriptedModel("尚未写完的正文。", { nearEvidence: true });
     vi.mocked(model.text).mockResolvedValue({
       text: "尚未写完的正文。",
@@ -507,11 +615,12 @@ describe("ChapterWorkerSuite", () => {
 
     for (let index = 0; index < 10; index += 1) {
       await supervisor.processNext("worker-length");
-      if (runs.getRun("run-length")?.status === "failed_recoverable") break;
+      if (runs.getRun("run-length")?.status === "failed") break;
     }
 
+    expect(model.text).toHaveBeenCalledTimes(1);
     const snapshot = runs.getSnapshot("run-length");
-    expect(snapshot.run.status).toBe("failed_recoverable");
+    expect(snapshot.run.status).toBe("failed");
     expect(
       snapshot.steps.find((step) => step.kind === "draft.generate")?.error,
     ).toMatchObject({
@@ -519,7 +628,7 @@ describe("ChapterWorkerSuite", () => {
       details: {
         finishReason: "length",
         partial: true,
-        recoveryActions: ["continue", "adopt", "regenerate"],
+        recoveryActions: ["regenerate"],
       },
     });
   });
@@ -1084,6 +1193,28 @@ function scriptedModel(
     }),
     structured: vi.fn(
       async (_run, _step, purpose, _request, _contract, validate) => {
+        if (purpose === "semantic-review-verification") {
+          const input = JSON.parse(String(_request.messages[0]!.content));
+          const checked = validate({
+            findings: input.findings.map((issue: { issueIndex: number }) => ({
+              issueIndex: issue.issueIndex,
+              disposition: "advisory",
+              explanation: "可选的文字修订",
+              currentQuote: input.manuscript.slice(0, 12),
+              citations: [],
+              repairDirection: "复核",
+              cannotRepairLocally: null,
+              alternatives: [],
+            })),
+          });
+          if (!checked.success) throw Error(checked.issues.join(";"));
+          return {
+            value: checked.data,
+            usage,
+            mode: "native" as const,
+            attempts: 1,
+          };
+        }
         const value =
           purpose === "scene-plan"
             ? {

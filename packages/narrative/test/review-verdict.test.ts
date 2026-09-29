@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  deriveReviewResult,
-  REVIEW_CONTRACT,
-  ReviewResultSchema,
-} from "../src/schemas.js";
+import { REVIEW_CONTRACT, ReviewResultSchema } from "../src/schemas.js";
 
 const scores = {
   continuity: 90,
@@ -46,37 +42,11 @@ describe("derived semantic review verdict", () => {
         },
       ],
     });
-    expect(deriveReviewResult(parsed)).toMatchObject({
-      verdict: "pass",
-      issues: [{ requiresAuthorDecision: false }],
-    });
+    expect(parsed.issues[0]?.requiresAuthorDecision).toBe(true);
+    // A model flag is a proposal; evidence verification determines routing.
   });
 
-  it("derives revise for unresolved major issues and block only for author decisions", () => {
-    const major = ReviewResultSchema.parse({
-      summary: "因果链需要修订。",
-      scores,
-      issues: [
-        {
-          category: "causality",
-          severity: "major",
-          message: "动机缺少页面证据",
-          evidenceParagraphs: [1],
-          suggestedDirection: "补充动机",
-          requiresAuthorDecision: false,
-        },
-      ],
-    });
-    expect(deriveReviewResult(major).verdict).toBe("revise");
-    expect(
-      deriveReviewResult({
-        ...major,
-        issues: [{ ...major.issues[0], requiresAuthorDecision: true }],
-      }).verdict,
-    ).toBe("block");
-  });
-
-  it("requires chapter-goal failures to be major or critical", () => {
+  it("allows minor deviations from generated chapter goals", () => {
     const parsed = ReviewResultSchema.safeParse({
       summary: "目标没有完成。",
       scores: { ...scores, goal: 30 },
@@ -91,7 +61,7 @@ describe("derived semantic review verdict", () => {
         },
       ],
     });
-    expect(parsed.success).toBe(false);
+    expect(parsed.success).toBe(true);
   });
 
   it("removes verdict from the model contract", () => {

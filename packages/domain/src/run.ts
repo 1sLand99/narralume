@@ -1,5 +1,28 @@
 import type { IsoDateTime, ProjectId } from "./index.js";
 
+/** The manuscript displayed, revised and settled must use the same selection. */
+export function selectedManuscriptArtifact(
+  snapshot: RunSnapshot,
+): NarrativeRunStep["outputArtifact"] {
+  for (const step of [...snapshot.steps].reverse()) {
+    if (step.status !== "succeeded" || !step.outputArtifact) continue;
+    const artifact = step.outputArtifact;
+    if (
+      step.kind === "semantic.review" &&
+      typeof artifact.verifiedContent === "string"
+    ) {
+      return {
+        ...artifact,
+        content: artifact.verifiedContent,
+        contentHash: artifact.reviewedContentHash,
+      };
+    }
+    if (step.kind === "revision.generate" || step.kind === "draft.generate")
+      return artifact;
+  }
+  return null;
+}
+
 export const RUN_MODES = [
   "autopilot",
   "chapter-gate",

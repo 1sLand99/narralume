@@ -7,37 +7,23 @@ import {
 } from "../src/index.js";
 
 describe("B1 execution policy", () => {
-  it.each([
-    ["fast", 64_000, 16_000, 16_000],
-    ["standard", 128_000, 32_000, 24_000],
-    ["deep", 256_000, 64_000, 32_000],
-  ] as const)(
-    "expands %s into calibrated context and output work ceilings",
-    (qualityPreset, contextWindow, draft, structured) => {
-      expect(
-        resolveEffectivePolicy({ qualityPreset }).effectivePolicy,
-      ).toMatchObject({
-        qualityPreset,
-        contextWindow,
-        draftMaxOutputTokens: draft,
-        planningMaxOutputTokens: structured,
-        reviewMaxOutputTokens: structured,
-        settlementMaxOutputTokens: structured,
-      });
-    },
-  );
-
-  it("lets explicit work ceilings override a preset", () => {
-    expect(
-      resolveEffectivePolicy({
-        qualityPreset: "fast",
-        contextWindow: 1_000_000,
-        draftMaxOutputTokens: 80_000,
-      }).effectivePolicy,
-    ).toMatchObject({ contextWindow: 1_000_000, draftMaxOutputTokens: 80_000 });
+  it("resolves safeguards without creative token ceilings", () => {
+    const { effectivePolicy } = resolveEffectivePolicy();
+    expect(effectivePolicy).toMatchObject({
+      maxRevisionCycles: 2,
+      semanticReview: true,
+    });
+    expect(effectivePolicy).not.toHaveProperty("contextWindow");
+    expect(effectivePolicy).not.toHaveProperty("draftMaxOutputTokens");
   });
 
   it.each([
+    "qualityPreset",
+    "contextWindow",
+    "draftMaxOutputTokens",
+    "reviewMaxOutputTokens",
+    "planningMaxOutputTokens",
+    "settlementMaxOutputTokens",
     "modelRoutingMode",
     "maxPhysicalCalls",
     "outputReserve",

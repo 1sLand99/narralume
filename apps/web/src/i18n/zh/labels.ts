@@ -91,11 +91,6 @@ export const labels = {
     catalog: "目录",
     migration: "迁移",
   },
-  qualityPreset: {
-    fast: "快速",
-    standard: "标准",
-    deep: "深研",
-  },
   probeStage: {
     text: "基础文本",
     stream: "流式事件",
@@ -343,6 +338,7 @@ export const labels = {
   stopReason: {
     longGoalBaselineChanged: "基线已变化，等待你继续或取消",
     chapterCommitApprovalRequired: "正文候选等待采纳",
+    factualRepairUnresolved: "事实冲突尚未修复，候选稿已保留",
     criticalReviewUnresolved: "审稿仍有严重问题，需要先修订",
     qualityGateBlocked: "审稿已阻断，需要作者处理",
     semanticReviewBlocked: "审稿已阻断，需要作者处理",

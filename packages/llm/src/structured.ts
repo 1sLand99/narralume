@@ -104,6 +104,7 @@ export async function generateStructured<T>(
         });
         lastResponse = response;
         totalUsage = addUsage(totalUsage, response.usage);
+        rejectTruncated(response, attempts, totalUsage);
         const checked = parseAndValidate(response.text, validate);
         options.onAttempt?.({
           attempt: attempts,
@@ -150,6 +151,7 @@ export async function generateStructured<T>(
         );
         lastResponse = response;
         totalUsage = addUsage(totalUsage, response.usage);
+        rejectTruncated(response, attempts, totalUsage);
         const checked = parseAndValidate(response.text, validate);
         options.onAttempt?.({
           attempt: attempts,
@@ -203,6 +205,7 @@ export async function generateStructured<T>(
   );
   lastResponse = promptResponse;
   totalUsage = addUsage(totalUsage, promptResponse.usage);
+  rejectTruncated(promptResponse, attempts, totalUsage);
   const promptChecked = parseAndValidate(promptResponse.text, validate);
   options.onAttempt?.({
     attempt: attempts,
@@ -237,6 +240,7 @@ export async function generateStructured<T>(
     );
     lastResponse = response;
     totalUsage = addUsage(totalUsage, response.usage);
+    rejectTruncated(response, attempts, totalUsage);
     const checked = parseAndValidate(response.text, validate);
     options.onAttempt?.({
       attempt: attempts,
@@ -264,6 +268,26 @@ export async function generateStructured<T>(
     lastResponse?.text ?? null,
     lastResponse?.finishReason ?? null,
   );
+}
+
+function rejectTruncated(
+  response: ModelResponse,
+  attempts: number,
+  usage: NormalizedUsage,
+): void {
+  if (
+    response.finishReason === "length" ||
+    response.finishReason === "context_length"
+  ) {
+    throw new StructuredOutputError(
+      "Structured output reached the model capacity; format repair cannot recover omitted content",
+      attempts,
+      ["truncated output"],
+      usage,
+      response.text,
+      response.finishReason,
+    );
+  }
 }
 
 /** Converts persisted capability flags into the exact tier plan. */

@@ -147,11 +147,6 @@ export class DeliveryWorkerSuite {
             filename: batch.filename,
             text: chunk.promptText,
             rangeLabel: `分段 ${index + 1}/${chunks.length}`,
-            maxOutputTokens: policyNumber(
-              snapshot.run.policy,
-              "analysisMaxOutputTokens",
-              16_000,
-            ),
           }),
           IMPORT_ANALYSIS_CONTRACT,
           deliveryValidator(ImportAnalysisSchema, (value) =>
@@ -221,12 +216,7 @@ export class DeliveryWorkerSuite {
         snapshot.run,
         step,
         `import-analysis-synthesis-${index}`,
-        importSynthesisRequest(
-          aggregate,
-          analyses[index]!,
-          project.language,
-          policyNumber(snapshot.run.policy, "analysisMaxOutputTokens", 16_000),
-        ),
+        importSynthesisRequest(aggregate, analyses[index]!, project.language),
         IMPORT_ANALYSIS_CONTRACT,
         deliveryValidator(ImportAnalysisSchema, (value) =>
           importEvidenceIssues(value, locator),
@@ -441,11 +431,6 @@ export class DeliveryWorkerSuite {
         projectTitle: project.title,
         language: project.language,
         text,
-        maxOutputTokens: policyNumber(
-          snapshot.run.policy,
-          "styleExtractMaxOutputTokens",
-          4_000,
-        ),
       }),
       STYLE_PROFILE_CONTRACT,
       deliveryValidator(StyleSchema),
@@ -493,7 +478,6 @@ function importAnalysisRequest(input: {
   filename: string;
   text: string;
   rangeLabel: string;
-  maxOutputTokens: number;
 }) {
   return {
     instructions: instructionsFor(input.language, {
@@ -528,7 +512,6 @@ function importAnalysisRequest(input: {
       },
     ],
     reasoningEffort: "medium" as const,
-    maxOutputTokens: input.maxOutputTokens,
   };
 }
 
@@ -536,7 +519,6 @@ function importSynthesisRequest(
   accumulated: ImportAnalysis,
   next: ImportAnalysis,
   language: string | null,
-  maxOutputTokens: number,
 ) {
   return {
     instructions: instructionsFor(language, {
@@ -560,7 +542,6 @@ function importSynthesisRequest(
       },
     ],
     reasoningEffort: "medium" as const,
-    maxOutputTokens,
   };
 }
 
@@ -748,7 +729,6 @@ function styleExtractionRequest(input: {
   projectTitle: string;
   language: string | null;
   text: string;
-  maxOutputTokens: number;
 }) {
   return {
     instructions: instructionsFor(input.language, {
@@ -778,7 +758,6 @@ function styleExtractionRequest(input: {
       },
     ],
     reasoningEffort: "medium" as const,
-    maxOutputTokens: input.maxOutputTokens,
   };
 }
 

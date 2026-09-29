@@ -8,7 +8,6 @@ import {
   type OutlineChangeRequest,
   type OutlineChangePreview,
   MIN_VIABLE_PARTIAL_CHARACTERS,
-  QUALITY_PRESETS,
   type AdoptRunStreamResponse,
   type AssistantActivityDto,
   type ProjectLanguage,
@@ -39,7 +38,6 @@ import {
   type PublicProviderDto,
   type ProjectCoverDto,
   type ProjectCoverMutation,
-  type QualityPreset,
   type RegenerateRunStreamResponse,
   type RunDetailDto,
   type RunOrigin,
@@ -62,7 +60,7 @@ import {
 } from "../kernel/transport";
 
 // 直接复用合约导出，供给 / 运行详情等工作区与后端保持同一份类型真相。
-export { MIN_VIABLE_PARTIAL_CHARACTERS, QUALITY_PRESETS };
+export { MIN_VIABLE_PARTIAL_CHARACTERS };
 export type {
   AdoptRunStreamResponse,
   ProjectLanguage,  AssistantActivityDto,
@@ -93,7 +91,6 @@ export type {
   PublicProviderDto,
   ProjectCoverDto,
   ProjectCoverMutation,
-  QualityPreset,
   RegenerateRunStreamResponse,
   RunDetailDto,
   RunOrigin,
@@ -2267,7 +2264,7 @@ export async function generateFoundation(
   input: {
     requestId: string;
     braindump: string;
-    /** 稀疏覆盖；qualityPreset 在这里选择。 */
+    /** 执行保护参数的稀疏覆盖。 */
     policy?: ModelExecutionPolicy;
     preferences: {
       genre: string | null;
@@ -2392,7 +2389,7 @@ export async function createAutopilotSession(
     origin?: RunOriginInput | null;
     targetChapters: number;
     windowSize: number;
-    maxRevisionCycles: number;
+    maxRevisionCycles?: number;
     /** 稀疏覆盖。 */
     chapterPolicy?: ModelExecutionPolicy;
   },

@@ -96,11 +96,6 @@ export const labels: typeof labelsZh = {
     catalog: "Catalog",
     migration: "Migration",
   },
-  qualityPreset: {
-    fast: "Fast",
-    standard: "Standard",
-    deep: "Deep",
-  },
   probeStage: {
     text: "Basic text",
     stream: "Streaming events",
@@ -348,6 +343,7 @@ export const labels: typeof labelsZh = {
   stopReason: {
     longGoalBaselineChanged: "The baseline changed; resume or cancel the task",
     chapterCommitApprovalRequired: "Manuscript candidate awaiting adoption",
+    factualRepairUnresolved: "Confirmed factual conflicts remain; the candidate is preserved",
     criticalReviewUnresolved: "Review still flags critical issues; revise first",
     qualityGateBlocked: "Review blocked the run; the author must step in",
     semanticReviewBlocked: "Review blocked the run; the author must step in",

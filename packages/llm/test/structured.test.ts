@@ -27,6 +27,27 @@ const request: ModelRequest = {
 };
 
 describe("structured generation", () => {
+  it.each(["{", '{"ok":true}'])(
+    "does not repair or accept truncated structured output: %s",
+    async (content) => {
+      const transport = recordingFetch([
+        jsonResponse({
+          id: "truncated",
+          choices: [{ message: { content }, finish_reason: "length" }],
+          usage: { prompt_tokens: 10, completion_tokens: 3000 },
+        }),
+      ]);
+      await expect(
+        gatewayWith(transport.fetch).generateStructured(
+          request,
+          validateProbe,
+          { maxRepairAttempts: 3 },
+        ),
+      ).rejects.toMatchObject({ finishReason: "length", attempts: 1 });
+      expect(transport.bodies).toHaveLength(1);
+    },
+  );
+
   it("uses prompt-only structured output until capabilities are explicitly verified", () => {
     expect(structuredTierPlan({})).toEqual(["prompt"]);
     expect(

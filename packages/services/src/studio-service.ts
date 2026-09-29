@@ -165,7 +165,6 @@ export function createSelectionEditRun(
         selectionStart: input.selectionStart,
         selectionEnd: input.selectionEnd,
         instruction: input.instruction,
-        editMaxOutputTokens: 4_000,
         origin: {
           surface: "writing",
           documentId: input.documentId,
@@ -336,8 +335,6 @@ export function createReplyRun(
         targetTurnId: input.targetTurnId,
         creationRequestId: input.creationRequestId,
         creationRequestHash: input.creationRequestHash,
-        contextWindow: 32_000,
-        replyMaxOutputTokens: 3_000,
         origin: {
           surface: "cocreate",
           documentId: null,

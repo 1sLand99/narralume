@@ -52,6 +52,11 @@ export function storyLineReviewEvidence(
             node.status === "committed" &&
             withinScope(node.id),
         );
+  const chapterNumbers = new Map(
+    outline
+      .filter((node) => node.kind === "chapter" && node.status !== "abandoned")
+      .map((node, index) => [node.id, index + 1]),
+  );
   const evidence = chapters.flatMap((chapter) => {
     const document = manuscript.find(
       (item) => item.outlineNodeId === chapter.id && item.kind === "chapter",
@@ -65,6 +70,7 @@ export function storyLineReviewEvidence(
     return [
       {
         chapterId: chapter.id,
+        chapterNumber: chapterNumbers.get(chapter.id)!,
         title: chapter.title,
         summary: summary.summary,
         versionId: version.id,

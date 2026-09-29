@@ -441,8 +441,6 @@ describe("chapter run API", () => {
         targetOutlineNodeId: target.chapterId,
         maxRevisionCycles: 1,
         policy: {
-          contextWindow: 8_000,
-          draftMaxOutputTokens: 2_000,
           minChapterCharacters: 100,
         },
       },
@@ -508,7 +506,6 @@ describe("chapter run API", () => {
     const { app } = await setup();
     const target = await createProjectAndChapter(app);
     const fullPolicy = {
-      qualityPreset: "deep",
       requestStartTimeoutMs: 30_000,
       streamIdleTimeoutMs: 90_000,
       logicalCallDeadlineMs: 300_000,
@@ -517,11 +514,6 @@ describe("chapter run API", () => {
       maxRetries: 2,
       retryBaseDelayMs: 1_500,
       maxRepairAttempts: 2,
-      contextWindow: 32_000,
-      draftMaxOutputTokens: 3_000,
-      reviewMaxOutputTokens: 2_500,
-      settlementMaxOutputTokens: 2_000,
-      planningMaxOutputTokens: 1_500,
       minChapterCharacters: 800,
     };
     const created = await app.inject({

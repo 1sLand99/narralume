@@ -37,6 +37,7 @@ const REVIEW_BLOCK_REASONS = new Set([
 ]);
 
 const REVIEW_REPAIR_REASONS = new Set([
+  "factual_repair_unresolved",
   "critical_review_unresolved",
   "revision_limit_reached",
 ]);
@@ -118,8 +119,6 @@ export function createFoundationRun(input: {
     targetOutlineNodeId: input.rootOutlineNodeId,
     policy: withRuntimeModelPolicy(
       {
-        contextWindow: 16_000,
-        foundationMaxOutputTokens: 8_000,
         ...input.policy,
         braindump: input.braindump,
         preferences: input.preferences,

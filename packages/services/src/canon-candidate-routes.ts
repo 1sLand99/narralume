@@ -103,7 +103,6 @@ export function registerCanonCandidateRoutes(
           {
             canonSpread: spread,
             canonInstruction: input.instruction,
-            canonMaxOutputTokens: 6_000,
             creationRequestId: input.requestId,
             creationRequestHash: requestHash,
             origin: { surface: "bible", canonSpread: spread },

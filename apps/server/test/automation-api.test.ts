@@ -1342,10 +1342,6 @@ describe("automation API", () => {
         windowSize: 2,
         maxRevisionCycles: 0,
         chapterPolicy: {
-          contextWindow: 8_000,
-          draftMaxOutputTokens: 2_000,
-          reviewMaxOutputTokens: 2_000,
-          settlementMaxOutputTokens: 2_000,
           minChapterCharacters: 100,
         },
       },
@@ -1518,12 +1514,6 @@ describe("automation API", () => {
       "volume",
     ]);
     expect(detail.session.chapterPolicy).toMatchObject({
-      qualityPreset: "standard",
-      contextWindow: 8_000,
-      draftMaxOutputTokens: 2_000,
-      reviewMaxOutputTokens: 2_000,
-      settlementMaxOutputTokens: 2_000,
-      planningMaxOutputTokens: 24_000,
       minChapterCharacters: 100,
     });
     const runsById = new Map(detail.runs.map((run) => [run.id, run]));
@@ -1535,7 +1525,6 @@ describe("automation API", () => {
       sessionId,
       // 显式继承 effectivePolicy.planningMaxOutputTokens 默认值，
       // 不再由 reviewMaxOutputTokens(2_000) 推导（旧逻辑会得到 6_000）
-      planningMaxOutputTokens: 24_000,
     });
     expect(linkedRun("closing-review")?.policy).toMatchObject({ sessionId });
     const chapterRuns = detail.links
@@ -1546,10 +1535,6 @@ describe("automation API", () => {
       expect(run?.policy).toMatchObject({
         autopilotSessionId: sessionId,
         chapterApproved: true,
-        qualityPreset: "standard",
-        contextWindow: 8_000,
-        draftMaxOutputTokens: 2_000,
-        reviewMaxOutputTokens: 2_000,
       });
     }
     expect(
@@ -1797,11 +1782,6 @@ describe("automation API", () => {
         windowSize: 1,
         maxRevisionCycles: 0,
         chapterPolicy: {
-          qualityPreset: "fast",
-          contextWindow: 16_000,
-          draftMaxOutputTokens: 1_800,
-          reviewMaxOutputTokens: 2_200,
-          planningMaxOutputTokens: 5_500,
           minChapterCharacters: 180,
         },
       },
@@ -1813,18 +1793,12 @@ describe("automation API", () => {
     };
     const sessionId = createdSession.id;
     expect(createdSession.chapterPolicy).toMatchObject({
-      qualityPreset: "fast",
-      maxRevisionCycles: 0,
-      maxRepairAttempts: 0,
+      maxRevisionCycles: 2,
+      maxRepairAttempts: 1,
       semanticReview: true,
-      contextWindow: 16_000,
-      draftMaxOutputTokens: 1_800,
-      reviewMaxOutputTokens: 2_200,
-      planningMaxOutputTokens: 5_500,
-      settlementMaxOutputTokens: 16_000,
       minChapterCharacters: 180,
       requestStartTimeoutMs: 120_000,
-      runDeadlineMs: 1_800_000,
+      runDeadlineMs: 3_600_000,
     });
 
     const listed = await app.inject({
@@ -1852,10 +1826,7 @@ describe("automation API", () => {
     );
     expect(planningRun?.policy).toMatchObject({
       sessionId,
-      qualityPreset: "fast",
-      draftMaxOutputTokens: 1_800,
       // 显式继承 planningMaxOutputTokens，不由 reviewMaxOutputTokens(2_200) 推导
-      planningMaxOutputTokens: 5_500,
     });
 
     const steer = await app.inject({
@@ -1884,8 +1855,6 @@ describe("automation API", () => {
     ).run;
     expect(steerRun.policy).toMatchObject({
       steerId,
-      qualityPreset: "fast",
-      planningMaxOutputTokens: 5_500,
     });
 
     expect(await finishRun(app, projectId, planningLink!.runId)).toBe(
@@ -1903,10 +1872,7 @@ describe("automation API", () => {
       autopilotSessionId: sessionId,
       chapterApproved: true,
       steerNotes: [],
-      qualityPreset: "fast",
-      contextWindow: 16_000,
-      draftMaxOutputTokens: 1_800,
-      maxRevisionCycles: 0,
+      maxRevisionCycles: 2,
     });
   });
 
@@ -2570,6 +2536,35 @@ function automationModel(
 }
 
 function scriptedValue(purpose: string, request?: unknown): unknown {
+  if (purpose === "semantic-review-verification") {
+    const input = JSON.parse(
+      (request as { messages: { content: string }[] }).messages[0]!.content,
+    );
+    const author = input.sources.find(
+      (source: { kind: string }) => source.kind === "author",
+    );
+    return {
+      findings: input.findings.map(
+        (issue: { issueIndex: number; requiresAuthorDecision: boolean }) => ({
+          issueIndex: issue.issueIndex,
+          disposition: issue.requiresAuthorDecision
+            ? "author_decision"
+            : "advisory",
+          explanation: "模型模拟：两个作者承诺需要明确选择",
+          currentQuote: input.manuscript.slice(0, 12),
+          citations: issue.requiresAuthorDecision
+            ? [
+                { sourceId: author.id, quote: author.content.slice(0, 15) },
+                { sourceId: author.id, quote: author.content.slice(15, 30) },
+              ]
+            : [],
+          repairDirection: null,
+          cannotRepairLocally: "测试作者决策分支",
+          alternatives: ["保留第一承诺", "保留第二承诺"],
+        }),
+      ),
+    };
+  }
   if (purpose === "book-foundation") {
     return {
       title: "雾港记忆候选",
